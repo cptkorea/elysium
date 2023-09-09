@@ -119,7 +119,7 @@ impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
                     right.update_height();
                     self.left = Some(right);
                 }
-                None => return Err(Error::RotationError),
+                None => unreachable!(),
             },
             Orientation::Right => match self.left.take() {
                 Some(mut left) => {
@@ -131,7 +131,7 @@ impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
                     left.update_height();
                     self.right = Some(left);
                 }
-                None => return Err(Error::RotationError),
+                None => unreachable!(),
             },
         }
         Ok(())

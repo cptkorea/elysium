@@ -9,8 +9,6 @@ pub mod avl;
 pub enum Error {
     #[error("Tree insertion error")]
     InsertionError,
-    #[error("Tree rotation error")]
-    RotationError,
 }
 
 type BoxedNode<T> = Box<BinaryTreeNode<T>>;
