@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::fmt::Debug;
 
 use thiserror::Error;
@@ -14,7 +13,7 @@ pub enum Error {
     RotationError,
 }
 
-type BoxedNode<T> = Box<TreeNode<T>>;
+type BoxedNode<T> = Box<BinaryTreeNode<T>>;
 
 #[derive(Debug)]
 pub enum Orientation {
@@ -22,14 +21,14 @@ pub enum Orientation {
     Right,
 }
 
-pub struct TreeNode<T: Ord> {
+pub struct BinaryTreeNode<T: Ord> {
     value: T,
     height: i32,
     left: Option<BoxedNode<T>>,
     right: Option<BoxedNode<T>>,
 }
 
-impl<T: Ord> TreeNode<T> {
+impl<T: Ord> BinaryTreeNode<T> {
     fn create(value: T) -> BoxedNode<T> {
         Box::new(Self {
             value,
@@ -40,14 +39,14 @@ impl<T: Ord> TreeNode<T> {
     }
 
     fn create_child(&mut self, value: T, orientation: Orientation) {
-        let node: BoxedNode<T> = TreeNode::create(value);
+        let node: BoxedNode<T> = BinaryTreeNode::create(value);
         match orientation {
             Orientation::Left => self.left = Some(node),
             Orientation::Right => self.right = Some(node),
         }
     }
 
-    fn find(&self, value: T) -> Option<&TreeNode<T>> {
+    fn find(&self, value: T) -> Option<&BinaryTreeNode<T>> {
         match value.cmp(&self.value) {
             Ordering::Less => match self.left.as_ref() {
                 Some(left) => left.find(value),

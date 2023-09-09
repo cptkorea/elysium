@@ -1,4 +1,4 @@
-use super::{BoxedNode, Error, Orientation, TreeNode};
+use super::{BinaryTreeNode, BoxedNode, Error, Orientation};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -30,7 +30,7 @@ impl<T: Ord> AVLTree<T> {
     pub fn insert(&mut self, value: T) -> Result<(), Error> {
         match self.root.as_mut() {
             None => {
-                self.root = Some(TreeNode::create(value));
+                self.root = Some(BinaryTreeNode::create(value));
             }
             Some(t) => {
                 t.insert(value)?;
@@ -48,7 +48,7 @@ impl<T: Ord> AVLTree<T> {
     }
 
     #[cfg(test)]
-    fn get_node(&self, value: T) -> Option<&TreeNode<T>> {
+    fn get_node(&self, value: T) -> Option<&BinaryTreeNode<T>> {
         match self.root.as_ref() {
             Some(r) => r.find(value),
             None => None,
@@ -69,7 +69,7 @@ trait AVLNode<T: Ord> {
     fn rotate(&mut self, direction: Orientation) -> Result<(), Error>;
 }
 
-impl<T: Ord> AVLNode<T> for TreeNode<T> {
+impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
     const THRESHOLD: i32 = BALANCE_THRESHOLD;
 
     fn balance(&self) -> Balance {
