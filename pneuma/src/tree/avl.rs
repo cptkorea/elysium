@@ -33,7 +33,7 @@ impl<T: Ord> AVLTree<T> {
                 self.root = Some(BinaryTreeNode::create(value));
             }
             Some(t) => {
-                t.insert(value)?;
+                AVLNode::insert(t.as_mut(), value)?;
             }
         }
         self.size += 1;
@@ -85,14 +85,14 @@ impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
         match value.cmp(&self.value) {
             Ordering::Less => {
                 match self.left.as_mut() {
-                    Some(left) => left.insert(value)?,
+                    Some(left) => AVLNode::insert(left.as_mut(), value)?,
                     None => self.create_child(value, Orientation::Left),
                 }
                 self.update_height();
             }
             Ordering::Greater => {
                 match self.right.as_mut() {
-                    Some(right) => right.insert(value)?,
+                    Some(right) => AVLNode::insert(right.as_mut(), value)?,
                     None => self.create_child(value, Orientation::Right),
                 }
                 self.update_height();
