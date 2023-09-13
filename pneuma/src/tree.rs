@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::fmt::Debug;
 
 use thiserror::Error;
@@ -135,6 +136,43 @@ impl<T: Ord> BinaryTreeNode<T> {
     }
 }
 
+pub struct TreeIterator<'a, T: Ord> {
+    curr: Option<&'a BoxedNode<T>>,
+    queue: VecDeque<&'a BoxedNode<T>>,
+}
+
+pub struct TreeElement<'a, T> {
+    pub item: &'a T,
+}
+
+impl<'a, T: Ord> Iterator for TreeIterator<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(next) = self.curr {
+            self.curr = next.left.as_ref();
+            self.queue.push_front(next);
+        }
+
+        self.queue.pop_front().map(|next| {
+            self.curr = next.right.as_ref();
+            &next.value
+        })
+    }
+}
+
+impl<'a, T: Ord> IntoIterator for &'a BinaryTree<T> {
+    type Item = &'a T;
+    type IntoIter = TreeIterator<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        TreeIterator {
+            curr: self.root.as_ref(),
+            queue: VecDeque::with_capacity(10),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -184,5 +222,18 @@ mod test {
         assert_eq!(1, tree.height());
         insert_node(&mut tree, 4);
         assert_eq!(2, tree.height());
+    }
+
+    #[test]
+    fn iterator() {
+        let mut tree = BinaryTree::new();
+        let insertions = [3, 4, 5, 2, 1, 7, 6];
+
+        for i in insertions {
+            insert_node(&mut tree, i);
+        }
+
+        let nodes: Vec<&u32> = tree.into_iter().collect();
+        assert_eq!(vec![&1, &2, &3, &4, &5, &6, &7], nodes);
     }
 }
