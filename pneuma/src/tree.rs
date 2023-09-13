@@ -61,6 +61,10 @@ impl<T: Ord> BinaryTree<T> {
             .map(|r| r.find(value).is_some())
             .unwrap_or_default()
     }
+
+    pub fn iter(&self) -> TreeRefIterator<'_, T> {
+        self.into_iter()
+    }
 }
 
 pub struct BinaryTreeNode<T: Ord> {
@@ -136,16 +140,17 @@ impl<T: Ord> BinaryTreeNode<T> {
     }
 }
 
-pub struct TreeIterator<'a, T: Ord> {
+pub struct TreeRefIterator<'a, T: Ord> {
     curr: Option<&'a BoxedNode<T>>,
     queue: VecDeque<&'a BoxedNode<T>>,
 }
 
-pub struct TreeElement<'a, T> {
-    pub item: &'a T,
+pub struct TreeIterator<T: Ord> {
+    curr: Option<BoxedNode<T>>,
+    queue: VecDeque<BoxedNode<T>>,
 }
 
-impl<'a, T: Ord> Iterator for TreeIterator<'a, T> {
+impl<'a, T: Ord> Iterator for TreeRefIterator<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -161,13 +166,41 @@ impl<'a, T: Ord> Iterator for TreeIterator<'a, T> {
     }
 }
 
+impl<T: Ord> Iterator for TreeIterator<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(mut next) = self.curr.take() {
+            self.curr = next.left.take();
+            self.queue.push_front(next);
+        }
+
+        self.queue.pop_front().map(|mut next| {
+            self.curr = next.right.take();
+            next.value
+        })
+    }
+}
+
 impl<'a, T: Ord> IntoIterator for &'a BinaryTree<T> {
     type Item = &'a T;
-    type IntoIter = TreeIterator<'a, T>;
+    type IntoIter = TreeRefIterator<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        TreeRefIterator {
+            curr: self.root.as_ref(),
+            queue: VecDeque::with_capacity(10),
+        }
+    }
+}
+
+impl<T: Ord> IntoIterator for BinaryTree<T> {
+    type Item = T;
+    type IntoIter = TreeIterator<T>;
 
     fn into_iter(self) -> Self::IntoIter {
         TreeIterator {
-            curr: self.root.as_ref(),
+            curr: self.root,
             queue: VecDeque::with_capacity(10),
         }
     }
@@ -233,7 +266,20 @@ mod test {
             insert_node(&mut tree, i);
         }
 
-        let nodes: Vec<&u32> = tree.into_iter().collect();
+        let nodes: Vec<&u32> = tree.iter().collect();
         assert_eq!(vec![&1, &2, &3, &4, &5, &6, &7], nodes);
+    }
+
+    #[test]
+    fn into_iterator() {
+        let mut tree = BinaryTree::new();
+        let insertions = [3, 4, 5, 2, 1, 7, 6];
+
+        for i in insertions {
+            insert_node(&mut tree, i);
+        }
+
+        let nodes: Vec<u32> = tree.into_iter().collect();
+        assert_eq!(vec![1, 2, 3, 4, 5, 6, 7], nodes);
     }
 }
