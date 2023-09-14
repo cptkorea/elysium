@@ -1,63 +1,52 @@
-use super::{BinaryTreeNode, BoxedNode, Error, Orientation};
+use super::{BinarySearchTree, BinaryTreeNode, Error, LevelIterator, Orientation};
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::fmt::Debug;
 
 const BALANCE_THRESHOLD: i32 = 1;
 
 #[derive(Default)]
 pub struct AVLTree<T: Ord> {
-    root: Option<BoxedNode<T>>,
-    size: usize,
+    inner: BinarySearchTree<T>,
 }
 
 impl<T: Ord> AVLTree<T> {
     pub fn new() -> Self {
         Self {
-            root: None,
-            size: 0,
+            inner: BinarySearchTree::new(),
         }
     }
 
     pub fn height(&self) -> i32 {
-        self.root.as_ref().map_or(0, |r| r.height)
+        self.inner.root.as_ref().map_or(0, |r| r.height)
     }
 
     pub fn size(&self) -> usize {
-        self.size
+        self.inner.size
     }
 
     pub fn insert(&mut self, value: T) -> Result<(), Error> {
-        match self.root.as_mut() {
+        match self.inner.root.as_mut() {
             None => {
-                self.root = Some(BinaryTreeNode::create(value));
+                self.inner.root = Some(BinaryTreeNode::create(value));
             }
             Some(t) => {
                 AVLNode::insert(t.as_mut(), value)?;
             }
         }
-        self.size += 1;
+        self.inner.size += 1;
         Ok(())
     }
 
     pub fn contains(&self, value: T) -> bool {
-        self.root
+        self.inner
+            .root
             .as_ref()
             .map(|r| r.find(value).is_some())
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
-    fn get_node(&self, value: T) -> Option<&BinaryTreeNode<T>> {
-        match self.root.as_ref() {
-            Some(r) => r.find(value),
-            None => None,
-        }
-    }
-
-    #[cfg(test)]
-    fn preorder_traversal(self) -> Vec<T> {
-        self.into_iter().collect()
+    pub fn level_iter(&self) -> LevelIterator<'_, T> {
+        self.inner.level_iter()
     }
 }
 
@@ -145,43 +134,6 @@ enum Balance {
     RightHeavy,
 }
 
-pub struct BfsIterator<T: Ord> {
-    curr: Option<BoxedNode<T>>,
-    queue: VecDeque<BoxedNode<T>>,
-}
-
-impl<T: Ord> Iterator for BfsIterator<T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let next = self.curr.take().map(|n| {
-            if let Some(left) = n.left {
-                self.queue.push_back(left);
-            }
-
-            if let Some(right) = n.right {
-                self.queue.push_back(right);
-            }
-            n.value
-        });
-
-        self.curr = self.queue.pop_front();
-        next
-    }
-}
-
-impl<T: Ord> IntoIterator for AVLTree<T> {
-    type Item = T;
-    type IntoIter = BfsIterator<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        BfsIterator {
-            curr: self.root,
-            queue: VecDeque::with_capacity(10),
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -249,8 +201,8 @@ mod test {
             assert_eq!(Balance::Balanced, tree.root.as_ref().unwrap().balance());
         }
 
-        let nodes = tree.preorder_traversal();
-        assert_eq!(vec![4, 2, 6, 1, 3, 5, 7], nodes);
+        let nodes: Vec<&u32> = tree.level_iter().collect();
+        assert_eq!(vec![&4, &2, &6, &1, &3, &5, &7], nodes);
     }
 
     #[test]
@@ -264,26 +216,10 @@ mod test {
         assert_eq!(3, tree.size);
         assert_eq!(1, tree.height());
 
-        let mut bfs_iter = tree.into_iter();
-        assert_eq!(Some(2), bfs_iter.next());
-        assert_eq!(Some(1), bfs_iter.next());
-        assert_eq!(Some(3), bfs_iter.next());
-        assert_eq!(None, bfs_iter.next());
-    }
-
-    #[test]
-    fn bfs_iterator() {
-        let mut tree = AVLTree::new();
-
-        insert_node(&mut tree, 2);
-        insert_node(&mut tree, 3);
-        insert_node(&mut tree, 1);
-
-        let mut bfs_iter = tree.into_iter();
-        assert_eq!(Some(2), bfs_iter.next());
-        assert_eq!(Some(1), bfs_iter.next());
-        assert_eq!(Some(3), bfs_iter.next());
-        assert_eq!(None, bfs_iter.next());
-        assert_eq!(None, bfs_iter.next());
+        let mut level_iter = tree.level_iter();
+        assert_eq!(Some(&2), level_iter.next());
+        assert_eq!(Some(&1), level_iter.next());
+        assert_eq!(Some(&3), level_iter.next());
+        assert_eq!(None, level_iter.next());
     }
 }

@@ -21,12 +21,19 @@ pub enum Orientation {
 }
 
 #[derive(Default)]
-pub struct BinaryTree<T: Ord> {
+pub struct BinarySearchTree<T: Ord> {
     root: Option<BoxedNode<T>>,
     size: usize,
 }
 
-impl<T: Ord> BinaryTree<T> {
+trait BinaryTreeLike<T: Ord> {
+    fn height(&self) -> i32;
+    fn size(&self) -> usize;
+    fn insert(&mut self, value: T) -> Result<(), Error>;
+    fn contains(&self, value: T) -> bool;
+}
+
+impl<T: Ord> BinarySearchTree<T> {
     pub fn new() -> Self {
         Self {
             root: None,
@@ -34,15 +41,28 @@ impl<T: Ord> BinaryTree<T> {
         }
     }
 
-    pub fn height(&self) -> i32 {
+    pub fn iter(&self) -> TreeRefIterator<'_, T> {
+        self.into_iter()
+    }
+
+    pub fn level_iter(&self) -> LevelIterator<T> {
+        LevelIterator {
+            curr: self.root.as_ref(),
+            queue: VecDeque::with_capacity(10),
+        }
+    }
+}
+
+impl<T: Ord> BinaryTreeLike<T> for BinarySearchTree<T> {
+    fn height(&self) -> i32 {
         self.root.as_ref().map_or(0, |r| r.height)
     }
 
-    pub fn size(&self) -> usize {
+    fn size(&self) -> usize {
         self.size
     }
 
-    pub fn insert(&mut self, value: T) -> Result<(), Error> {
+    fn insert(&mut self, value: T) -> Result<(), Error> {
         match self.root.as_mut() {
             None => {
                 self.root = Some(BinaryTreeNode::create(value));
@@ -55,15 +75,11 @@ impl<T: Ord> BinaryTree<T> {
         Ok(())
     }
 
-    pub fn contains(&self, value: T) -> bool {
+    fn contains(&self, value: T) -> bool {
         self.root
             .as_ref()
             .map(|r| r.find(value).is_some())
             .unwrap_or_default()
-    }
-
-    pub fn iter(&self) -> TreeRefIterator<'_, T> {
-        self.into_iter()
     }
 }
 
@@ -140,6 +156,11 @@ impl<T: Ord> BinaryTreeNode<T> {
     }
 }
 
+pub struct LevelIterator<'a, T: Ord> {
+    curr: Option<&'a BoxedNode<T>>,
+    queue: VecDeque<&'a BoxedNode<T>>,
+}
+
 pub struct TreeRefIterator<'a, T: Ord> {
     curr: Option<&'a BoxedNode<T>>,
     queue: VecDeque<&'a BoxedNode<T>>,
@@ -182,7 +203,27 @@ impl<T: Ord> Iterator for TreeIterator<T> {
     }
 }
 
-impl<'a, T: Ord> IntoIterator for &'a BinaryTree<T> {
+impl<'a, T: Ord> Iterator for LevelIterator<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.curr.take().map(|n| {
+            if let Some(left) = n.left.as_ref() {
+                self.queue.push_back(left);
+            }
+
+            if let Some(right) = n.right.as_ref() {
+                self.queue.push_back(right);
+            }
+            &n.value
+        });
+
+        self.curr = self.queue.pop_front();
+        next
+    }
+}
+
+impl<'a, T: Ord> IntoIterator for &'a BinarySearchTree<T> {
     type Item = &'a T;
     type IntoIter = TreeRefIterator<'a, T>;
 
@@ -194,7 +235,7 @@ impl<'a, T: Ord> IntoIterator for &'a BinaryTree<T> {
     }
 }
 
-impl<T: Ord> IntoIterator for BinaryTree<T> {
+impl<T: Ord> IntoIterator for BinarySearchTree<T> {
     type Item = T;
     type IntoIter = TreeIterator<T>;
 
@@ -210,13 +251,13 @@ impl<T: Ord> IntoIterator for BinaryTree<T> {
 mod test {
     use super::*;
 
-    fn insert_node<T: Ord + Debug>(tree: &mut BinaryTree<T>, value: T) {
+    fn insert_node<T: Ord + Debug>(tree: &mut BinarySearchTree<T>, value: T) {
         tree.insert(value).expect("unable to insert node");
     }
 
     #[test]
     fn insert_nodes() {
-        let mut tree = BinaryTree::new();
+        let mut tree = BinarySearchTree::new();
         assert_eq!(0, tree.size());
 
         insert_node(&mut tree, 1);
@@ -228,7 +269,7 @@ mod test {
 
     #[test]
     fn contains() {
-        let mut tree = BinaryTree::new();
+        let mut tree = BinarySearchTree::new();
         let values = [2, 1, 3, 4];
 
         for v in values {
@@ -245,7 +286,7 @@ mod test {
 
     #[test]
     fn height() {
-        let mut tree = BinaryTree::new();
+        let mut tree = BinarySearchTree::new();
 
         insert_node(&mut tree, 2);
         assert_eq!(0, tree.height());
@@ -259,7 +300,7 @@ mod test {
 
     #[test]
     fn iterator() {
-        let mut tree = BinaryTree::new();
+        let mut tree = BinarySearchTree::new();
         let insertions = [3, 4, 5, 2, 1, 7, 6];
 
         for i in insertions {
@@ -272,7 +313,7 @@ mod test {
 
     #[test]
     fn into_iterator() {
-        let mut tree = BinaryTree::new();
+        let mut tree = BinarySearchTree::new();
         let insertions = [3, 4, 5, 2, 1, 7, 6];
 
         for i in insertions {
@@ -281,5 +322,21 @@ mod test {
 
         let nodes: Vec<u32> = tree.into_iter().collect();
         assert_eq!(vec![1, 2, 3, 4, 5, 6, 7], nodes);
+    }
+
+    #[test]
+    fn level_iterator() {
+        let mut tree = BinarySearchTree::new();
+
+        insert_node(&mut tree, 2);
+        insert_node(&mut tree, 3);
+        insert_node(&mut tree, 1);
+
+        let mut level_iter = tree.level_iter();
+        assert_eq!(Some(&2), level_iter.next());
+        assert_eq!(Some(&1), level_iter.next());
+        assert_eq!(Some(&3), level_iter.next());
+        assert_eq!(None, level_iter.next());
+        assert_eq!(None, level_iter.next());
     }
 }
