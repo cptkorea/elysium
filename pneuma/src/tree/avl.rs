@@ -71,7 +71,7 @@ impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
     }
 
     fn insert(&mut self, value: T) -> Result<(), Error> {
-        match value.cmp(&self.value) {
+        match value.cmp(&self.item) {
             Ordering::Less => {
                 match self.left.as_mut() {
                     Some(left) => AVLNode::insert(left.as_mut(), value)?,
@@ -198,7 +198,10 @@ mod test {
 
         for i in insertions {
             insert_node(&mut tree, i);
-            assert_eq!(Balance::Balanced, tree.root.as_ref().unwrap().balance());
+            assert_eq!(
+                Balance::Balanced,
+                tree.inner.root.as_ref().unwrap().balance()
+            );
         }
 
         let nodes: Vec<&u32> = tree.level_iter().collect();
@@ -213,7 +216,7 @@ mod test {
         insert_node(&mut tree, 2);
         insert_node(&mut tree, 3);
 
-        assert_eq!(3, tree.size);
+        assert_eq!(3, tree.size());
         assert_eq!(1, tree.height());
 
         let mut level_iter = tree.level_iter();

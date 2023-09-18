@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use thiserror::Error;
 
 pub mod avl;
+pub mod map;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -26,19 +27,40 @@ pub struct BinarySearchTree<T: Ord> {
     size: usize,
 }
 
-trait BinaryTreeLike<T: Ord> {
-    fn height(&self) -> i32;
-    fn size(&self) -> usize;
-    fn insert(&mut self, value: T) -> Result<(), Error>;
-    fn contains(&self, value: T) -> bool;
-}
-
 impl<T: Ord> BinarySearchTree<T> {
     pub fn new() -> Self {
         Self {
             root: None,
             size: 0,
         }
+    }
+
+    fn height(&self) -> i32 {
+        self.root.as_ref().map_or(0, |r| r.height)
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+
+    fn insert(&mut self, item: T) -> Result<(), Error> {
+        match self.root.as_mut() {
+            None => {
+                self.root = Some(BinaryTreeNode::create(item));
+            }
+            Some(t) => {
+                t.insert(item)?;
+            }
+        }
+        self.size += 1;
+        Ok(())
+    }
+
+    fn contains(&self, item: &T) -> bool {
+        self.root
+            .as_ref()
+            .map(|r| r.find(&item).is_some())
+            .unwrap_or_default()
     }
 
     pub fn iter(&self) -> TreeRefIterator<'_, T> {
@@ -53,88 +75,58 @@ impl<T: Ord> BinarySearchTree<T> {
     }
 }
 
-impl<T: Ord> BinaryTreeLike<T> for BinarySearchTree<T> {
-    fn height(&self) -> i32 {
-        self.root.as_ref().map_or(0, |r| r.height)
-    }
-
-    fn size(&self) -> usize {
-        self.size
-    }
-
-    fn insert(&mut self, value: T) -> Result<(), Error> {
-        match self.root.as_mut() {
-            None => {
-                self.root = Some(BinaryTreeNode::create(value));
-            }
-            Some(t) => {
-                t.insert(value)?;
-            }
-        }
-        self.size += 1;
-        Ok(())
-    }
-
-    fn contains(&self, value: T) -> bool {
-        self.root
-            .as_ref()
-            .map(|r| r.find(value).is_some())
-            .unwrap_or_default()
-    }
-}
-
 pub struct BinaryTreeNode<T: Ord> {
-    value: T,
+    item: T,
     height: i32,
     left: Option<BoxedNode<T>>,
     right: Option<BoxedNode<T>>,
 }
 
 impl<T: Ord> BinaryTreeNode<T> {
-    fn create(value: T) -> BoxedNode<T> {
+    fn create(item: T) -> BoxedNode<T> {
         Box::new(Self {
-            value,
+            item,
             height: 0,
             left: None,
             right: None,
         })
     }
 
-    fn create_child(&mut self, value: T, orientation: Orientation) {
-        let node: BoxedNode<T> = BinaryTreeNode::create(value);
+    fn create_child(&mut self, item: T, orientation: Orientation) {
+        let node: BoxedNode<T> = BinaryTreeNode::create(item);
         match orientation {
             Orientation::Left => self.left = Some(node),
             Orientation::Right => self.right = Some(node),
         }
     }
 
-    fn find(&self, value: T) -> Option<&BinaryTreeNode<T>> {
-        match value.cmp(&self.value) {
+    fn find(&self, item: &T) -> Option<&BinaryTreeNode<T>> {
+        match item.cmp(&self.item) {
             Ordering::Less => match self.left.as_ref() {
-                Some(left) => left.find(value),
+                Some(left) => left.find(item),
                 None => None,
             },
             Ordering::Greater => match self.right.as_ref() {
-                Some(right) => right.find(value),
+                Some(right) => right.find(item),
                 None => None,
             },
             Ordering::Equal => return Some(self),
         }
     }
 
-    fn insert(&mut self, value: T) -> Result<(), Error> {
-        match value.cmp(&self.value) {
+    fn insert(&mut self, item: T) -> Result<(), Error> {
+        match item.cmp(&self.item) {
             Ordering::Less => {
                 match self.left.as_mut() {
-                    Some(left) => left.insert(value)?,
-                    None => self.create_child(value, Orientation::Left),
+                    Some(left) => left.insert(item)?,
+                    None => self.create_child(item, Orientation::Left),
                 }
                 self.update_height();
             }
             Ordering::Greater => {
                 match self.right.as_mut() {
-                    Some(right) => right.insert(value)?,
-                    None => self.create_child(value, Orientation::Right),
+                    Some(right) => right.insert(item)?,
+                    None => self.create_child(item, Orientation::Right),
                 }
                 self.update_height();
             }
@@ -182,7 +174,7 @@ impl<'a, T: Ord> Iterator for TreeRefIterator<'a, T> {
 
         self.queue.pop_front().map(|next| {
             self.curr = next.right.as_ref();
-            &next.value
+            &next.item
         })
     }
 }
@@ -198,7 +190,7 @@ impl<T: Ord> Iterator for TreeIterator<T> {
 
         self.queue.pop_front().map(|mut next| {
             self.curr = next.right.take();
-            next.value
+            next.item
         })
     }
 }
@@ -215,7 +207,7 @@ impl<'a, T: Ord> Iterator for LevelIterator<'a, T> {
             if let Some(right) = n.right.as_ref() {
                 self.queue.push_back(right);
             }
-            &n.value
+            &n.item
         });
 
         self.curr = self.queue.pop_front();
@@ -251,8 +243,8 @@ impl<T: Ord> IntoIterator for BinarySearchTree<T> {
 mod test {
     use super::*;
 
-    fn insert_node<T: Ord + Debug>(tree: &mut BinarySearchTree<T>, value: T) {
-        tree.insert(value).expect("unable to insert node");
+    fn insert_node<T: Ord + Debug>(tree: &mut BinarySearchTree<T>, item: T) {
+        tree.insert(item).expect("unable to insert node");
     }
 
     #[test]
@@ -277,11 +269,11 @@ mod test {
         }
 
         for v in values {
-            assert!(tree.contains(v));
+            assert!(tree.contains(&v));
         }
 
-        assert!(!tree.contains(0));
-        assert!(!tree.contains(5));
+        assert!(!tree.contains(&0));
+        assert!(!tree.contains(&5));
     }
 
     #[test]
