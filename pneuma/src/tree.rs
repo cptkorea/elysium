@@ -35,11 +35,12 @@ impl<T: Ord> BinarySearchTree<T> {
         }
     }
 
+    #[cfg(test)]
     fn height(&self) -> i32 {
         self.root.as_ref().map_or(0, |r| r.height)
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.size
     }
 

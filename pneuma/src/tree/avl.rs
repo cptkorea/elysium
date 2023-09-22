@@ -37,7 +37,7 @@ impl<T: Ord> AVLTree<T> {
         Ok(())
     }
 
-    pub fn contains(&self, value: T) -> bool {
+    pub fn contains(&self, value: &T) -> bool {
         self.inner
             .root
             .as_ref()
@@ -164,11 +164,11 @@ mod test {
         }
 
         for v in values {
-            assert!(tree.contains(v));
+            assert!(tree.contains(&v));
         }
 
-        assert!(!tree.contains(0));
-        assert!(!tree.contains(5));
+        assert!(!tree.contains(&0));
+        assert!(!tree.contains(&5));
     }
 
     #[test]
