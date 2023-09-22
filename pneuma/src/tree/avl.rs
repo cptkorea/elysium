@@ -1,6 +1,9 @@
-use super::{BinarySearchTree, BinaryTreeNode, Error, LevelIterator, Orientation};
+use super::{bst::BinarySearchTree, BinaryTreeNode, Error, Orientation};
 use std::cmp::Ordering;
 use std::fmt::Debug;
+
+#[cfg(test)]
+use super::iter::LevelIterator;
 
 const BALANCE_THRESHOLD: i32 = 1;
 
@@ -16,37 +19,26 @@ impl<T: Ord> AVLTree<T> {
         }
     }
 
-    pub fn height(&self) -> i32 {
-        self.inner.root.as_ref().map_or(0, |r| r.height)
-    }
-
     pub fn size(&self) -> usize {
-        self.inner.size
+        self.inner.size()
     }
 
     pub fn insert(&mut self, value: T) -> Result<(), Error> {
-        match self.inner.root.as_mut() {
-            None => {
-                self.inner.root = Some(BinaryTreeNode::create(value));
-            }
-            Some(t) => {
-                AVLNode::insert(t.as_mut(), value)?;
-            }
-        }
-        self.inner.size += 1;
-        Ok(())
+        self.inner.insert_with_fn(value, AVLNode::insert)
     }
 
     pub fn contains(&self, value: &T) -> bool {
-        self.inner
-            .root
-            .as_ref()
-            .map(|r| r.find(value).is_some())
-            .unwrap_or_default()
+        self.inner.contains(value)
     }
 
-    pub fn level_iter(&self) -> LevelIterator<'_, T> {
+    #[cfg(test)]
+    fn level_iter(&self) -> LevelIterator<'_, T> {
         self.inner.level_iter()
+    }
+
+    #[cfg(test)]
+    fn height(&self) -> i32 {
+        self.inner.height()
     }
 }
 
