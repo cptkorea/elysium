@@ -1,6 +1,9 @@
-use super::{BinarySearchTree, BinaryTreeNode, Error, LevelIterator, Orientation};
+use super::{bst::BinarySearchTree, BinaryTreeNode, Error, Orientation};
 use std::cmp::Ordering;
 use std::fmt::Debug;
+
+#[cfg(test)]
+use super::iter::{LevelIter, NodeIter};
 
 const BALANCE_THRESHOLD: i32 = 1;
 
@@ -16,37 +19,37 @@ impl<T: Ord> AVLTree<T> {
         }
     }
 
-    pub fn height(&self) -> i32 {
-        self.inner.root.as_ref().map_or(0, |r| r.height)
-    }
-
     pub fn size(&self) -> usize {
-        self.inner.size
+        self.inner.size()
     }
 
     pub fn insert(&mut self, value: T) -> Result<(), Error> {
-        match self.inner.root.as_mut() {
-            None => {
-                self.inner.root = Some(BinaryTreeNode::create(value));
-            }
-            Some(t) => {
-                AVLNode::insert(t.as_mut(), value)?;
-            }
-        }
-        self.inner.size += 1;
-        Ok(())
+        self.inner.insert_with_fn(value, AVLNode::insert)
     }
 
-    pub fn contains(&self, value: T) -> bool {
-        self.inner
-            .root
-            .as_ref()
-            .map(|r| r.find(value).is_some())
-            .unwrap_or_default()
+    pub fn contains(&self, value: &T) -> bool {
+        self.inner.contains(value)
     }
 
-    pub fn level_iter(&self) -> LevelIterator<'_, T> {
+    #[cfg(test)]
+    fn is_balanced(&self) -> bool {
+        self.nodes_iter()
+            .all(|n| AVLNode::balance(n.as_ref()) == Balance::Balanced)
+    }
+
+    #[cfg(test)]
+    fn level_iter(&self) -> LevelIter<'_, T> {
         self.inner.level_iter()
+    }
+
+    #[cfg(test)]
+    fn nodes_iter(&self) -> NodeIter<'_, T> {
+        self.inner.nodes_iter()
+    }
+
+    #[cfg(test)]
+    fn height(&self) -> i32 {
+        self.inner.height()
     }
 }
 
@@ -71,7 +74,7 @@ impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
     }
 
     fn insert(&mut self, value: T) -> Result<(), Error> {
-        match value.cmp(&self.value) {
+        match value.cmp(&self.item) {
             Ordering::Less => {
                 match self.left.as_mut() {
                     Some(left) => AVLNode::insert(left.as_mut(), value)?,
@@ -164,11 +167,11 @@ mod test {
         }
 
         for v in values {
-            assert!(tree.contains(v));
+            assert!(tree.contains(&v));
         }
 
-        assert!(!tree.contains(0));
-        assert!(!tree.contains(5));
+        assert!(!tree.contains(&0));
+        assert!(!tree.contains(&5));
     }
 
     #[test]
@@ -198,7 +201,7 @@ mod test {
 
         for i in insertions {
             insert_node(&mut tree, i);
-            assert_eq!(Balance::Balanced, tree.root.as_ref().unwrap().balance());
+            assert!(tree.is_balanced());
         }
 
         let nodes: Vec<&u32> = tree.level_iter().collect();
@@ -213,7 +216,7 @@ mod test {
         insert_node(&mut tree, 2);
         insert_node(&mut tree, 3);
 
-        assert_eq!(3, tree.size);
+        assert_eq!(3, tree.size());
         assert_eq!(1, tree.height());
 
         let mut level_iter = tree.level_iter();
