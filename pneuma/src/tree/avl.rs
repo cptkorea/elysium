@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 
 #[cfg(test)]
-use super::iter::LevelIterator;
+use super::iter::{LevelIter, NodeIter};
 
 const BALANCE_THRESHOLD: i32 = 1;
 
@@ -32,8 +32,19 @@ impl<T: Ord> AVLTree<T> {
     }
 
     #[cfg(test)]
-    fn level_iter(&self) -> LevelIterator<'_, T> {
+    fn is_balanced(&self) -> bool {
+        self.nodes_iter()
+            .all(|n| AVLNode::balance(n.as_ref()) == Balance::Balanced)
+    }
+
+    #[cfg(test)]
+    fn level_iter(&self) -> LevelIter<'_, T> {
         self.inner.level_iter()
+    }
+
+    #[cfg(test)]
+    fn nodes_iter(&self) -> NodeIter<'_, T> {
+        self.inner.nodes_iter()
     }
 
     #[cfg(test)]
@@ -190,10 +201,7 @@ mod test {
 
         for i in insertions {
             insert_node(&mut tree, i);
-            assert_eq!(
-                Balance::Balanced,
-                tree.inner.root.as_ref().unwrap().balance()
-            );
+            assert!(tree.is_balanced());
         }
 
         let nodes: Vec<&u32> = tree.level_iter().collect();

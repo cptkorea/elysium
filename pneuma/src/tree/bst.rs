@@ -1,11 +1,11 @@
 use super::{
-    iter::{TreeIterator, TreeRefIterator},
+    iter::{ItemIter, ItemRefIter},
     BinaryTreeNode, BoxedNode, Error,
 };
 use std::collections::VecDeque;
 
 #[cfg(test)]
-use super::iter::LevelIterator;
+use super::iter::{LevelIter, NodeIter};
 
 #[derive(Default)]
 pub struct BinarySearchTree<T: Ord> {
@@ -61,13 +61,21 @@ impl<T: Ord> BinarySearchTree<T> {
             .unwrap_or_default()
     }
 
-    pub fn iter(&self) -> TreeRefIterator<'_, T> {
+    pub fn iter(&self) -> ItemRefIter<'_, T> {
         self.into_iter()
     }
 
     #[cfg(test)]
-    pub(super) fn level_iter(&self) -> LevelIterator<T> {
-        LevelIterator {
+    pub(super) fn level_iter(&self) -> LevelIter<T> {
+        LevelIter {
+            curr: self.root.as_ref(),
+            queue: VecDeque::with_capacity(10),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn nodes_iter(&self) -> NodeIter<T> {
+        NodeIter {
             curr: self.root.as_ref(),
             queue: VecDeque::with_capacity(10),
         }
@@ -81,10 +89,10 @@ impl<T: Ord> BinarySearchTree<T> {
 
 impl<'a, T: Ord> IntoIterator for &'a BinarySearchTree<T> {
     type Item = &'a T;
-    type IntoIter = TreeRefIterator<'a, T>;
+    type IntoIter = ItemRefIter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        TreeRefIterator {
+        ItemRefIter {
             curr: self.root.as_ref(),
             queue: VecDeque::with_capacity(10),
         }
@@ -93,10 +101,10 @@ impl<'a, T: Ord> IntoIterator for &'a BinarySearchTree<T> {
 
 impl<T: Ord> IntoIterator for BinarySearchTree<T> {
     type Item = T;
-    type IntoIter = TreeIterator<T>;
+    type IntoIter = ItemIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        TreeIterator {
+        ItemIter {
             curr: self.root,
             queue: VecDeque::with_capacity(10),
         }
