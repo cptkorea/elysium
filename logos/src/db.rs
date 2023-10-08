@@ -1,15 +1,9 @@
 use std::collections::BTreeMap;
 
+use crate::Error;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("serialization error")]
-    SerializeError,
-    #[error("i/o error")]
-    IoError(#[from] std::io::Error),
-}
+const CAPACITY: usize = 10_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Entry {
@@ -36,9 +30,14 @@ impl MemTable {
         }
     }
 
-    pub fn write(&mut self, key: String, value: u32) {
+    pub fn write(&mut self, key: String, value: u32) -> Result<(), Error> {
+        if self.size == CAPACITY {
+            return Err(Error::MemTableFull);
+        }
+
         self.items.insert(key, value);
         self.size += 1;
+        Ok(())
     }
 
     pub fn read<S: AsRef<str>>(&self, key: S) -> Option<&u32> {
@@ -61,8 +60,8 @@ pub struct SSTable {
     entries: Vec<Entry>,
 }
 
-impl From<MemTable> for SSTable {
-    fn from(value: MemTable) -> Self {
+impl From<&MemTable> for SSTable {
+    fn from(value: &MemTable) -> Self {
         SSTable {
             entries: value.items(),
         }
@@ -71,7 +70,7 @@ impl From<MemTable> for SSTable {
 
 impl SSTable {
     pub fn into_bytes(&self) -> Result<Vec<u8>, Error> {
-        bincode::serialize(self).map_err(|_| Error::SerializeError)
+        bincode::serialize(self).map_err(|_| Error::BincodeError)
     }
 }
 
@@ -79,19 +78,23 @@ impl SSTable {
 mod test {
     use super::*;
 
+    fn write(m: &mut MemTable, key: &str, value: u32) {
+        m.write(String::from(key), value).unwrap();
+    }
+
     #[test]
     fn simple_read_write() {
         let mut m = MemTable::new();
-        m.write(String::from("apple"), 1);
-        m.write(String::from("banana"), 2);
-        m.write(String::from("cactus"), 3);
+        write(&mut m, "apple", 1);
+        write(&mut m, "banana", 2);
+        write(&mut m, "cactus", 3);
 
         assert_eq!(Some(&1), m.read("apple"));
         assert_eq!(Some(&2), m.read("banana"));
         assert_eq!(Some(&3), m.read("cactus"));
         assert_eq!(None, m.read("dummy"));
 
-        m.write(String::from("apple"), 5);
+        write(&mut m, "apple", 5);
         assert_eq!(Some(&5), m.read("apple"));
         assert_eq!(Some(&2), m.read("banana"));
         assert_eq!(Some(&3), m.read("cactus"));
@@ -101,10 +104,10 @@ mod test {
     #[test]
     fn items() {
         let mut m = MemTable::new();
-        m.write(String::from("apple"), 1);
-        m.write(String::from("banana"), 2);
-        m.write(String::from("cactus"), 3);
-        m.write(String::from("apple"), 5);
+        write(&mut m, "apple", 1);
+        write(&mut m, "banana", 2);
+        write(&mut m, "cactus", 3);
+        write(&mut m, "apple", 5);
 
         let items = m.items();
         assert_eq!(
