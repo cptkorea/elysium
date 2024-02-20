@@ -1,42 +1,48 @@
-use super::KeyValue;
+use std::collections::BTreeMap;
 
-const TABLE_SIZE: usize = 1000;
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub key: String,
+    pub value: u32,
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.key.eq(&other.key)
+    }
+}
 
 pub struct MemTable {
-    items: Vec<KeyValue>,
+    items: BTreeMap<String, u32>,
     size: usize,
 }
 
 impl MemTable {
     pub fn new() -> Self {
         Self {
-            items: Vec::with_capacity(TABLE_SIZE),
+            items: BTreeMap::new(),
             size: 0,
         }
     }
 
     pub fn write(&mut self, key: String, value: u32) {
-        self.items.push(KeyValue { key, value });
+        self.items.insert(key, value);
         self.size += 1;
     }
 
-    pub fn read<S: AsRef<str>>(&self, key: S) -> Option<u32> {
-        for kv in self.items.iter().rev() {
-            if &kv.key == key.as_ref() {
-                return Some(kv.value);
-            }
-        }
-        None
+    pub fn read<S: AsRef<str>>(&self, key: S) -> Option<&u32> {
+        self.items.get(key.as_ref())
     }
 
-    pub fn items(&self) -> Vec<KeyValue> {
-        let mut items: Vec<KeyValue> = Vec::new();
-        for kv in self.items.iter().rev() {
-            if !items.iter().any(|s| s.key == kv.key) {
-                items.push(kv.to_owned())
-            }
-        }
-        items
+    #[cfg(test)]
+    pub fn items(&self) -> Vec<Entry> {
+        self.items
+            .iter()
+            .map(|(k, v)| Entry {
+                key: k.to_owned(),
+                value: v.to_owned(),
+            })
+            .collect()
     }
 }
 
@@ -51,15 +57,15 @@ mod test {
         m.write(String::from("banana"), 2);
         m.write(String::from("cactus"), 3);
 
-        assert_eq!(Some(1), m.read("apple"));
-        assert_eq!(Some(2), m.read("banana"));
-        assert_eq!(Some(3), m.read("cactus"));
+        assert_eq!(Some(&1), m.read("apple"));
+        assert_eq!(Some(&2), m.read("banana"));
+        assert_eq!(Some(&3), m.read("cactus"));
         assert_eq!(None, m.read("dummy"));
 
         m.write(String::from("apple"), 5);
-        assert_eq!(Some(5), m.read("apple"));
-        assert_eq!(Some(2), m.read("banana"));
-        assert_eq!(Some(3), m.read("cactus"));
+        assert_eq!(Some(&5), m.read("apple"));
+        assert_eq!(Some(&2), m.read("banana"));
+        assert_eq!(Some(&3), m.read("cactus"));
         assert_eq!(None, m.read("dummy"));
     }
 
@@ -75,17 +81,17 @@ mod test {
         assert_eq!(
             items,
             vec![
-                KeyValue {
+                Entry {
                     key: String::from("apple"),
                     value: 5
                 },
-                KeyValue {
-                    key: String::from("cactus"),
-                    value: 3
-                },
-                KeyValue {
+                Entry {
                     key: String::from("banana"),
                     value: 2
+                },
+                Entry {
+                    key: String::from("cactus"),
+                    value: 3
                 },
             ]
         )
