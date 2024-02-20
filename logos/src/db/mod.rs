@@ -1,6 +1,17 @@
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("serialization error")]
+    SerializeError,
+    #[error("i/o error")]
+    IoError(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Entry {
     pub key: String,
     pub value: u32,
@@ -34,7 +45,6 @@ impl MemTable {
         self.items.get(key.as_ref())
     }
 
-    #[cfg(test)]
     pub fn items(&self) -> Vec<Entry> {
         self.items
             .iter()
@@ -43,6 +53,25 @@ impl MemTable {
                 value: v.to_owned(),
             })
             .collect()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct SSTable {
+    entries: Vec<Entry>,
+}
+
+impl From<MemTable> for SSTable {
+    fn from(value: MemTable) -> Self {
+        SSTable {
+            entries: value.items(),
+        }
+    }
+}
+
+impl SSTable {
+    pub fn into_bytes(&self) -> Result<Vec<u8>, Error> {
+        bincode::serialize(self).map_err(|_| Error::SerializeError)
     }
 }
 
