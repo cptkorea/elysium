@@ -18,21 +18,30 @@ impl Driver {
     }
 
     pub async fn write(&mut self, key: String, value: u32) -> Result<(), Error> {
-        Ok(self.master.write(key, value)?)
+        if self.master.at_capacity() {
+            self.flush_table().await?;
+        }
+        self.master.write(key, value);
+        Ok(())
     }
 
     pub async fn flush_table(&mut self) -> Result<(), Error> {
-        let path = get_path(self.offset);
-
         let sst = SSTable::from(&self.master);
         let bytes = sst.into_bytes()?;
+        let offset = self.offset;
+        self.offset += 1;
 
-        let mut file = File::create(path)?;
-        file.write_all(&bytes)?;
+        tokio::task::spawn(async move {
+            let _ = write_sst(offset, bytes);
+        });
+
         Ok(())
     }
 }
 
-fn get_path(offset: usize) -> String {
-    format!("logos/{}.sst", offset)
+fn write_sst(offset: usize, bytes: Vec<u8>) -> Result<(), Error> {
+    let path = format!("logos/{}.sst", offset);
+    let mut file = File::create(path)?;
+    file.write_all(&bytes)?;
+    Ok(())
 }

@@ -30,14 +30,9 @@ impl MemTable {
         }
     }
 
-    pub fn write(&mut self, key: String, value: u32) -> Result<(), Error> {
-        if self.size == CAPACITY {
-            return Err(Error::MemTableFull);
-        }
-
+    pub fn write(&mut self, key: String, value: u32) {
         self.items.insert(key, value);
         self.size += 1;
-        Ok(())
     }
 
     pub fn read<S: AsRef<str>>(&self, key: S) -> Option<&u32> {
@@ -52,6 +47,10 @@ impl MemTable {
                 value: v.to_owned(),
             })
             .collect()
+    }
+
+    pub fn at_capacity(&self) -> bool {
+        self.size == CAPACITY
     }
 }
 
