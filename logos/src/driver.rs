@@ -27,6 +27,8 @@ impl Driver {
 
     pub async fn flush_table(&mut self) -> Result<(), Error> {
         let sst = SSTable::from(&self.master);
+        self.master = MemTable::new();
+
         let bytes = sst.into_bytes()?;
         let offset = self.offset;
         self.offset += 1;
@@ -44,4 +46,35 @@ fn write_sst(offset: usize, bytes: Vec<u8>) -> Result<(), Error> {
     let mut file = File::create(path)?;
     file.write_all(&bytes)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use crate::db::Entry;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn memtable_capacity() {
+        let mut driver = Driver {
+            master: MemTable::with_capacity(10),
+            offset: 0,
+        };
+
+        for i in 0..10 {
+            driver.write(i.to_string(), i).await.unwrap();
+        }
+
+        assert!(driver.master.at_capacity());
+
+        driver.write(String::from("11"), 11).await.unwrap();
+
+        assert_eq!(
+            driver.master.items(),
+            vec![Entry {
+                key: String::from("11"),
+                value: 11,
+            }]
+        )
+    }
 }

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::Error;
 use serde::{Deserialize, Serialize};
 
-const CAPACITY: usize = 10_000;
+const DEFAULT_CAPACITY: usize = 10_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Entry {
@@ -20,13 +20,19 @@ impl PartialEq for Entry {
 pub struct MemTable {
     items: BTreeMap<String, u32>,
     size: usize,
+    capacity: usize,
 }
 
 impl MemTable {
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_CAPACITY)
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             items: BTreeMap::new(),
             size: 0,
+            capacity,
         }
     }
 
@@ -50,7 +56,7 @@ impl MemTable {
     }
 
     pub fn at_capacity(&self) -> bool {
-        self.size == CAPACITY
+        self.size >= self.capacity
     }
 }
 
@@ -78,7 +84,7 @@ mod test {
     use super::*;
 
     fn write(m: &mut MemTable, key: &str, value: u32) {
-        m.write(String::from(key), value).unwrap();
+        m.write(String::from(key), value);
     }
 
     #[test]
