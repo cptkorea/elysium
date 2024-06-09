@@ -18,3 +18,4 @@ pneuma: 'breath', as something necessary to life
 logos: 'speech', the law/word of God 
 ontos: 'machine', with default mode of operation, no-opinion 
 ```
+<img src="docs/images/TrinityProcessor.webp" width=300)>
