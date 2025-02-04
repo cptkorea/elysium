@@ -1,49 +1,60 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::ptr::NonNull;
 
-type NodeRef = Rc<RefCell<Node>>;
+type Link = Option<NonNull<Node>>;
 
 pub struct SkipList {
     height: usize,
-    head: NodeRef,
+    head: NonNull<Node>,
 }
 
 #[derive(Debug, Default)]
 struct Node {
     value: u32,
     height: usize,
-    successors: Vec<Option<NodeRef>>,
+    successors: Vec<Option<NonNull<Node>>>,
+}
+
+trait NodeOp {
+    fn get_value(self) -> u32;
+    fn get_successor(self, i: usize) -> Link;
+    fn update_successor(self, i: usize, next: Link);
+}
+
+impl NodeOp for NonNull<Node> {
+    fn get_value(self) -> u32 {
+        unsafe { (*self.as_ptr()).value }
+    }
+
+    fn get_successor(self, i: usize) -> Link {
+        let height = unsafe { (*self.as_ptr()).height };
+        if i >= height {
+            return None;
+        }
+
+        let successors = unsafe { &(*self.as_ptr()).successors };
+        successors[i]
+    }
+
+    fn update_successor(self, i: usize, next: Link) {
+        unsafe { (*self.as_ptr()).successors[i] = next };
+    }
 }
 
 impl Node {
-    fn head(height: usize) -> NodeRef {
-        let mut successors = Vec::with_capacity(height);
+    fn new(value: u32, height: usize) -> Self {
+        let mut successors: Vec<Link> = Vec::with_capacity(height);
         (0..height).for_each(|_| successors.push(None));
 
-        Rc::new(RefCell::new(Self {
-            value: 0,
-            height,
-            successors,
-        }))
-    }
-
-    fn new(value: u32, height: usize) -> NodeRef {
-        Rc::new(RefCell::new(Self {
+        Self {
             value,
             height,
-            successors: Vec::with_capacity(height),
-        }))
-    }
-
-    fn get_successor(&self, idx: usize) -> Option<&NodeRef> {
-        if idx >= self.height {
-            return None;
+            successors,
         }
-        self.successors[idx].as_ref()
     }
 
-    fn add_successor(&mut self, idx: usize, successor: NodeRef) {
-        self.successors[idx] = Some(successor);
+    fn create_nonnull(value: u32, height: usize) -> NonNull<Node> {
+        let new_node = Node::new(value, height);
+        unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(new_node))) }
     }
 }
 
@@ -51,40 +62,31 @@ impl SkipList {
     pub fn new(height: usize) -> Self {
         Self {
             height,
-            head: Node::head(height),
+            head: Node::create_nonnull(0, height),
         }
-    }
-
-    fn create_successors(&self) -> Vec<Option<NodeRef>> {
-        let mut successors = Vec::with_capacity(self.height);
-        (0..self.height).for_each(|_| successors.push(None));
-        successors
     }
 
     pub fn insert(&mut self, value: u32) {
         let mut predecessors = Vec::with_capacity(self.height);
-        let mut curr = self.head.clone();
+        let mut curr = self.head;
         for i in (0..self.height).rev() {
-            while let Some(next) = curr.clone().borrow().get_successor(i) {
-                if next.borrow().value < value {
-                    curr = next.clone();
+            while let Some(next) = curr.get_successor(i) {
+                if next.get_value() < value {
+                    curr = next;
                 }
             }
             predecessors.push(curr.clone());
         }
 
-        let pos = curr.clone().borrow().get_successor(0).cloned();
-        if pos.is_none() || pos.is_some_and(|n| n.borrow().value != value) {
+        let pos = curr.get_successor(0);
+        if pos.is_none() || pos.is_some_and(|n| n.get_value() != value) {
             let level = 2;
-            let new_node = Node::new(value, level);
+            let new_node = Node::create_nonnull(value, level);
 
             for i in 0..level {
-                let mut prev = predecessors[self.height - i - 1].borrow_mut();
-                new_node
-                    .borrow_mut()
-                    .successors
-                    .push(prev.get_successor(i).cloned());
-                prev.add_successor(i, new_node.clone());
+                let prev = predecessors[self.height - i - 1];
+                new_node.update_successor(i, prev.get_successor(i));
+                prev.update_successor(i, Some(new_node));
             }
         }
     }
@@ -95,8 +97,8 @@ impl SkipList {
         for i in 0..self.height {
             let mut values = Vec::new();
             let mut curr = self.head.clone();
-            while let Some(next) = curr.clone().borrow().get_successor(i) {
-                values.push(next.borrow().value.to_string());
+            while let Some(next) = curr.get_successor(i) {
+                values.push(next.get_value().to_string());
                 curr = next.clone();
             }
 
@@ -120,10 +122,11 @@ mod test {
 
     #[test]
     fn insertion() {
-        let mut skiplist = SkipList::new(10);
+        let mut skiplist = SkipList::new(5);
         skiplist.insert(1);
         skiplist.insert(2);
 
-        println!("{:?}", skiplist.display());
+        let res: Vec<_> = skiplist.display();
+        assert_eq!(vec!["1->2->x", "1->2->x", "x", "x", "x"], res);
     }
 }
