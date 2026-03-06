@@ -5,6 +5,8 @@
 //! "express lanes," allowing traversal to skip over large sections of the
 //! lower levels. This gives performance comparable to a balanced binary
 //! search tree while being simpler to implement.
+//! 
+//! https://en.wikipedia.org/wiki/Skip_list
 //!
 //! # Architecture
 //!
@@ -148,6 +150,11 @@ pub struct SkipList<K, V, R: LevelGenerator = XorShift> {
 
     /// Number of key-value pairs currently stored.
     len: usize,
+
+    /// Reusable scratch buffer for predecessor tracking during insert/remove.
+    /// Allocated once at construction and cleared before each use, avoiding a
+    /// heap allocation on every mutating operation.
+    update_buf: Vec<Option<usize>>,
 }
 
 // -- Convenience constructors (XorShift default) ----------------------------
@@ -233,6 +240,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
             level: 0,
             rng,
             len: 0,
+            update_buf: vec![None; max_level],
         }
     }
 
@@ -292,9 +300,9 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
     ///
     /// O(log n) on average.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        // `update[i]` will hold the last node at level `i` whose key is less
-        // than `key`. `None` means the head sentinel is the predecessor.
-        let mut update = vec![None; self.max_level];
+        // Reset the scratch buffer instead of allocating a new Vec.
+        self.update_buf.iter_mut().for_each(|slot| *slot = None);
+
         let mut current: Option<usize> = None;
 
         for i in (0..=self.level).rev() {
@@ -305,7 +313,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
                     _ => break,
                 }
             }
-            update[i] = current;
+            self.update_buf[i] = current;
         }
 
         // If the key already exists at level 0, update its value in place.
@@ -319,11 +327,8 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
         let new_level = self.rng.random_level(self.max_level);
 
         // If the new node is taller than any existing node, the extra levels
-        // have the head sentinel as their predecessor.
+        // have the head sentinel as their predecessor (already None from reset).
         if new_level > self.level {
-            for slot in update.iter_mut().take(new_level + 1).skip(self.level + 1) {
-                *slot = None;
-            }
             self.level = new_level;
         }
 
@@ -337,9 +342,9 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
         // Wire the new node into each level it participates in by splicing
         // it between its predecessor and successor.
         for i in 0..=new_level {
-            let prev_next = self.forward_of(update[i], i);
+            let prev_next = self.forward_of(self.update_buf[i], i);
             self.node_mut(node_idx).forward[i] = prev_next;
-            self.set_forward(update[i], i, Some(node_idx));
+            self.set_forward(self.update_buf[i], i, Some(node_idx));
         }
 
         self.len += 1;
@@ -356,7 +361,8 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
     ///
     /// O(log n) on average.
     pub fn remove(&mut self, key: &K) -> Option<V> {
-        let mut update = vec![None; self.max_level];
+        self.update_buf.iter_mut().for_each(|slot| *slot = None);
+
         let mut current: Option<usize> = None;
 
         for i in (0..=self.level).rev() {
@@ -367,7 +373,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
                     _ => break,
                 }
             }
-            update[i] = current;
+            self.update_buf[i] = current;
         }
 
         let target_idx = self.forward_of(current, 0)?;
@@ -379,7 +385,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
         let target_height = self.node(target_idx).forward.len();
         for i in 0..target_height {
             let target_next = self.node(target_idx).forward[i];
-            self.set_forward(update[i], i, target_next);
+            self.set_forward(self.update_buf[i], i, target_next);
         }
 
         // Shrink the active level if the top levels are now empty.
