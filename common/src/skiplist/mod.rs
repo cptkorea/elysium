@@ -36,6 +36,7 @@
 //! ```
 
 use std::fmt;
+use std::mem::size_of;
 
 // Re-export RNG types so `use common::skiplist::{XorShift, LevelGenerator}`
 // continues to work alongside the canonical `common::rng::` path.
@@ -145,7 +146,7 @@ pub struct SkipList<K, V, R: LevelGenerator = XorShift> {
     /// Starts at 0 and grows as taller nodes are inserted.
     level: usize,
 
-    /// The pluggable level generator determining new-node heights.
+    /// The pluggable level generator to determine new-node heights.
     rng: R,
 
     /// Number of key-value pairs currently stored.
@@ -257,6 +258,11 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
     /// Returns `true` if the skiplist contains the given key.
     pub fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
+    }
+
+    /// Returns the configured maximum level for this skiplist.
+    pub fn max_level(&self) -> usize {
+        self.max_level
     }
 
     /// Returns a reference to the value associated with `key`, or `None` if
@@ -440,6 +446,32 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
             idx
         }
     }
+
+        /// Returns an estimate of the total heap memory (in bytes) owned by this
+    /// skiplist.
+    ///
+    /// Includes the arena, every node's forward-pointer array, the head and
+    /// scratch buffers, and the free list. Does **not** account for heap
+    /// memory owned by `K` or `V` themselves (e.g. the backing buffer of a
+    /// `String` key).
+    ///
+    /// This is an O(n) operation — intended for diagnostics and testing, not
+    /// for use in hot paths.
+    pub fn heap_size(&self) -> usize {
+        let head = self.head.capacity() * size_of::<Option<usize>>();
+        let update_buf = self.update_buf.capacity() * size_of::<Option<usize>>();
+        let free_list = self.free_list.capacity() * size_of::<usize>();
+
+        let arena_shell = self.arena.capacity() * size_of::<Option<Node<K, V>>>();
+        let arena_forward: usize = self
+            .arena
+            .iter()
+            .filter_map(|slot| slot.as_ref())
+            .map(|node| node.forward.capacity() * size_of::<Option<usize>>())
+            .sum();
+
+        head + update_buf + free_list + arena_shell + arena_forward
+    }
 }
 
 // -- Debug ------------------------------------------------------------------
@@ -590,5 +622,31 @@ mod tests {
         assert!(debug.contains("1: \"a\""));
         assert!(debug.contains("2: \"b\""));
         assert!(debug.contains("3: \"c\""));
+    }
+
+    #[test]
+    fn heap_size_grows_with_inserts() {
+        let mut sl = seeded_list();
+        let empty_size = sl.heap_size();
+        assert!(empty_size > 0, "even an empty list owns heap buffers");
+
+        sl.insert(1, "one");
+        let one_size = sl.heap_size();
+        assert!(one_size > empty_size);
+
+        for i in 2..=100 {
+            sl.insert(i, "x");
+        }
+        let full_size = sl.heap_size();
+        assert!(full_size > one_size);
+    }
+
+    #[test]
+    fn max_level_accessor() {
+        let sl: SkipList<i32, i32> = SkipList::with_max_level(8);
+        assert_eq!(sl.max_level(), 8);
+
+        let sl2: SkipList<i32, i32> = SkipList::new();
+        assert_eq!(sl2.max_level(), DEFAULT_MAX_LEVEL);
     }
 }
