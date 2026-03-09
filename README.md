@@ -4,16 +4,15 @@
 
 Inspired by the [Log Structure Merge-Tree](https://github.com/keyvanakbary/learning-notes/blob/master/books/designing-data-intensive-applications.md#storage-and-retrieval) outlined in the Designing Data Intensive Applications book.
 
-The project is broken down into three components:
+The project is broken down into two components:
 ```
-- pneuma (WIP: data-structure library)
+- common (WIP: shared data-structure library)
 - ontos (WIP: log based storage engine library)
 ```
 
 # Etymology
 The word elysium was inspired by the [Trinity Processor](https://xenoblade.fandom.com/wiki/Trinity_Processor) in Xenoblade Chronicles 2 which holds three cores:
 ```
-pneuma: 'breath', as something necessary to life
 ontos: 'machine', with default mode of operation, no-opinion 
 ```
 <img src="docs/images/TrinityProcessor.webp" width=300)>

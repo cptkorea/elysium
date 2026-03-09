@@ -1,4 +1,4 @@
-use super::{bst::BinarySearchTree, BinaryTreeNode, Error, Orientation};
+use super::{BinaryTreeNode, Error, Orientation, bst::BinarySearchTree};
 use std::cmp::Ordering;
 use std::fmt::Debug;
 

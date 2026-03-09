@@ -1,6 +1,6 @@
 use super::{
-    iter::{ItemIter, ItemRefIter},
     BinaryTreeNode, BoxedNode, Error,
+    iter::{ItemIter, ItemRefIter},
 };
 use std::collections::VecDeque;
 
