@@ -5,9 +5,9 @@
 //! "express lanes," allowing traversal to skip over large sections of the
 //! lower levels. This gives performance comparable to a balanced binary
 //! search tree while being simpler to implement.
-//! 
+//!
 //! https://en.wikipedia.org/wiki/Skip_list
-//! 
+//!
 //! # Implementation Notes
 //! The implementation is based on the paper ["Skip Lists: A Probabilistic Alternative to Balanced Trees"]
 //! (https://www.cl.cam.ac.uk/teaching/0506/Algorithms/skiplists.pdf) by William Pugh.
@@ -415,7 +415,9 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
             self.level -= 1;
         }
 
-        let removed = self.arena[target_idx].take().expect("node was already freed");
+        let removed = self.arena[target_idx]
+            .take()
+            .expect("node was already freed");
         self.free_list.push(target_idx);
         self.len -= 1;
         Some(removed.value)
@@ -463,11 +465,11 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
         }
     }
 
-        /// Returns an estimate of the total heap memory (in bytes) owned by this
+    /// Returns an estimate of the total heap memory (in bytes) owned by this
     /// skiplist.
     ///
     /// Includes the arena, every node's forward-pointer array, the head and
-    /// scratch buffers, and the free list. Does **not** account for heap
+    /// scratch buffers, and the free list. This DOES NOT account for heap
     /// memory owned by `K` or `V` themselves (e.g. the backing buffer of a
     /// `String` key).
     ///
