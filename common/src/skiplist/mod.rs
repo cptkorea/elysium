@@ -16,11 +16,10 @@
 //!
 //! # Randomization
 //!
-//! The level assigned to each new node is determined by a
-//! [`LevelGenerator`](crate::rng::LevelGenerator). The default generator,
-//! [`XorShift`](crate::rng::XorShift), is a minimal xorshift64 PRNG that
-//! requires no external dependencies. Custom generators (e.g. backed by the
-//! `rand` crate) can be injected via [`SkipList::with_rng`].
+//! The level assigned to each new node is determined by a [`RandomN`]
+//! implementation. The default, [`XorShift`], is a minimal xorshift64 PRNG
+//! that requires no external dependencies. Custom generators (e.g. backed by
+//! the `rand` crate) can be injected via [`SkipList::with_rng`].
 //!
 //! # Quick Start
 //!
@@ -38,9 +37,7 @@
 use std::fmt;
 use std::mem::size_of;
 
-// Re-export RNG types so `use common::skiplist::{XorShift, LevelGenerator}`
-// continues to work alongside the canonical `common::rng::` path.
-pub use crate::rng::{LevelGenerator, XorShift};
+pub use crate::rng::{RandomN, XorShift};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -68,7 +65,7 @@ pub const DEFAULT_MAX_LEVEL: usize = 16;
 /// A single node in the skiplist arena.
 ///
 /// Stores a key-value pair and a tower of forward pointers whose height is
-/// determined at insertion time by the [`LevelGenerator`].
+/// determined at insertion time by the [`RandomN`] generator.
 struct Node<K, V> {
     key: K,
     value: V,
@@ -88,7 +85,7 @@ struct Node<K, V> {
 ///
 /// - `K` — Key type. Must implement [`Ord`] for sorted ordering.
 /// - `V` — Value type.
-/// - `R` — Level generator strategy. Defaults to [`XorShift`], a built-in
+/// - `R` — Randomization strategy. Defaults to [`XorShift`], a built-in
 ///   xorshift64 PRNG. Swap in a custom generator via [`SkipList::with_rng`].
 ///
 /// # Initialization
@@ -126,7 +123,7 @@ struct Node<K, V> {
 /// assert_eq!(sl.get(&"banana"), None);
 /// assert_eq!(sl.len(), 2);
 /// ```
-pub struct SkipList<K, V, R: LevelGenerator = XorShift> {
+pub struct SkipList<K, V, R: RandomN = XorShift> {
     /// Forward pointers for the head sentinel, one per possible level.
     /// `head[i]` points to the first node at level `i`, or `None` if that
     /// level is empty. Length is always equal to `max_level`.
@@ -146,7 +143,7 @@ pub struct SkipList<K, V, R: LevelGenerator = XorShift> {
     /// Starts at 0 and grows as taller nodes are inserted.
     level: usize,
 
-    /// The pluggable level generator to determine new-node heights.
+    /// The pluggable random number generator determining new-node heights.
     rng: R,
 
     /// Number of key-value pairs currently stored.
@@ -210,8 +207,8 @@ impl<K: Ord, V> Default for SkipList<K, V, XorShift> {
 
 // -- Core implementation (generic over R) -----------------------------------
 
-impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
-    /// Creates a new skiplist with a custom maximum level and level generator.
+impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
+    /// Creates a new skiplist with a custom maximum level and RNG.
     ///
     /// This is the most flexible constructor, giving full control over both
     /// the skiplist's height and its randomization strategy.
@@ -223,7 +220,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
     /// # Examples
     ///
     /// ```
-    /// use common::rng::XorShift;
+    /// use common::skiplist::XorShift;
     /// use common::skiplist::SkipList;
     ///
     /// // Lower probability = flatter lists (more nodes at level 0, fewer express lanes)
@@ -330,7 +327,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
             }
         }
 
-        let new_level = self.rng.random_level(self.max_level);
+        let new_level = self.rng.random_n(self.max_level);
 
         // If the new node is taller than any existing node, the extra levels
         // have the head sentinel as their predecessor (already None from reset).
@@ -476,7 +473,7 @@ impl<K: Ord, V, R: LevelGenerator> SkipList<K, V, R> {
 
 // -- Debug ------------------------------------------------------------------
 
-impl<K: fmt::Debug + Ord, V: fmt::Debug, R: LevelGenerator> fmt::Debug for SkipList<K, V, R> {
+impl<K: fmt::Debug + Ord, V: fmt::Debug, R: RandomN> fmt::Debug for SkipList<K, V, R> {
     /// Formats the skiplist as a sorted debug map by traversing level 0.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut map = f.debug_map();
@@ -501,9 +498,9 @@ mod tests {
     /// A deterministic generator that always returns the same level.
     struct FixedLevel(usize);
 
-    impl LevelGenerator for FixedLevel {
-        fn random_level(&mut self, max_level: usize) -> usize {
-            self.0.min(max_level - 1)
+    impl RandomN for FixedLevel {
+        fn random_n(&mut self, max: usize) -> usize {
+            self.0.min(max - 1)
         }
     }
 
