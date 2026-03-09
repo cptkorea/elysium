@@ -667,4 +667,105 @@ mod tests {
         let sl2: SkipList<i32, i32> = SkipList::new();
         assert_eq!(sl2.max_level(), DEFAULT_MAX_LEVEL);
     }
+
+    #[test]
+    fn remove_first_and_last() {
+        let mut sl = seeded_list();
+        sl.insert(1, "one");
+        sl.insert(2, "two");
+        sl.insert(3, "three");
+        sl.insert(4, "four");
+
+        assert_eq!(sl.remove(&1), Some("one"));
+        assert_eq!(sl.remove(&4), Some("four"));
+        assert_eq!(sl.len(), 2);
+
+        assert_eq!(sl.get(&1), None);
+        assert_eq!(sl.get(&4), None);
+        assert_eq!(sl.get(&2), Some(&"two"));
+        assert_eq!(sl.get(&3), Some(&"three"));
+    }
+
+    #[test]
+    fn remove_all_to_empty() {
+        let mut sl = seeded_list();
+        for i in 1..=5 {
+            sl.insert(i, "v");
+        }
+
+        for i in 1..=5 {
+            assert!(sl.remove(&i).is_some());
+        }
+        assert!(sl.is_empty());
+        assert_eq!(sl.len(), 0);
+        assert_eq!(sl.get(&1), None);
+
+        sl.insert(10, "ten");
+        assert_eq!(sl.get(&10), Some(&"ten"));
+        assert_eq!(sl.len(), 1);
+    }
+
+    #[test]
+    fn remove_tall_node() {
+        let mut sl: SkipList<i32, i32, FixedLevel> = SkipList::with_rng(4, FixedLevel(3));
+        sl.insert(1, 10);
+        sl.insert(2, 20);
+        sl.insert(3, 30);
+
+        assert_eq!(sl.remove(&2), Some(20));
+        assert_eq!(sl.get(&2), None);
+        assert_eq!(sl.get(&1), Some(&10));
+        assert_eq!(sl.get(&3), Some(&30));
+        assert_eq!(sl.len(), 2);
+    }
+
+    #[test]
+    fn remove_shrinks_level() {
+        struct AlternatingLevel {
+            high: bool,
+        }
+        impl RandomN for AlternatingLevel {
+            fn random_n(&mut self, max: usize) -> usize {
+                if self.high {
+                    self.high = false;
+                    (max - 1).min(3)
+                } else {
+                    0
+                }
+            }
+        }
+
+        let mut sl: SkipList<i32, i32, AlternatingLevel> =
+            SkipList::with_rng(4, AlternatingLevel { high: true });
+
+        // First insert gets the tall level (3), rest get level 0.
+        sl.insert(5, 50);
+        let level_before = sl.level;
+        assert!(level_before > 0, "tall node should raise the active level");
+
+        sl.insert(1, 10);
+        sl.insert(9, 90);
+
+        assert_eq!(sl.remove(&5), Some(50));
+        assert!(
+            sl.level < level_before,
+            "active level should shrink after removing the only tall node"
+        );
+
+        assert_eq!(sl.get(&1), Some(&10));
+        assert_eq!(sl.get(&9), Some(&90));
+        assert_eq!(sl.len(), 2);
+    }
+
+    #[test]
+    fn remove_double() {
+        let mut sl = seeded_list();
+        sl.insert(1, "one");
+        sl.insert(2, "two");
+
+        assert_eq!(sl.remove(&1), Some("one"));
+        assert_eq!(sl.remove(&1), None);
+        assert_eq!(sl.len(), 1);
+        assert_eq!(sl.get(&2), Some(&"two"));
+    }
 }
