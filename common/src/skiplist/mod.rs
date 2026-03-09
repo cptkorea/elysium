@@ -7,6 +7,10 @@
 //! search tree while being simpler to implement.
 //! 
 //! https://en.wikipedia.org/wiki/Skip_list
+//! 
+//! # Implementation Notes
+//! The implementation is based on the paper ["Skip Lists: A Probabilistic Alternative to Balanced Trees"]
+//! (https://www.cl.cam.ac.uk/teaching/0506/Algorithms/skiplists.pdf) by William Pugh.
 //!
 //! # Architecture
 //!
@@ -34,6 +38,7 @@
 //! assert_eq!(list.get(&2), None);
 //! ```
 
+use std::borrow::Borrow;
 use std::fmt;
 use std::mem::size_of;
 
@@ -85,16 +90,17 @@ struct Node<K, V> {
 ///
 /// - `K` — Key type. Must implement [`Ord`] for sorted ordering.
 /// - `V` — Value type.
-/// - `R` — Randomization strategy. Defaults to [`XorShift`], a built-in
-///   xorshift64 PRNG. Swap in a custom generator via [`SkipList::with_rng`].
+/// - `R` — Randomization strategy. Must implement [`RandomN`]. Defaults to
+///   [`XorShift`], a built-in xorshift64 PRNG. Swap in a custom generator
+///   via [`SkipList::with_rng`].
 ///
 /// # Initialization
 ///
 /// There are three ways to create a skiplist, in order of increasing control:
 ///
-/// - [`SkipList::new()`] — max_level=16, XorShift with p=0.5
-/// - [`SkipList::with_max_level(n)`] — custom level cap, default XorShift
-/// - [`SkipList::with_rng(n, rng)`] — custom level cap and custom generator
+/// - [`SkipList::new`] — max_level=16, [`XorShift`] with p=0.5
+/// - [`SkipList::with_max_level`] — custom level cap, default [`XorShift`]
+/// - [`SkipList::with_rng`] — custom level cap and custom [`RandomN`] impl
 ///
 /// **Choosing `max_level`:** a good rule of thumb is `log₂(expected_n)`.
 /// The default of 16 handles ~65K elements well. For a million elements,
@@ -116,11 +122,11 @@ struct Node<K, V> {
 /// sl.insert("apple", 1);
 /// sl.insert("cherry", 3);
 ///
-/// assert_eq!(sl.get(&"apple"), Some(&1));
+/// assert_eq!(sl.get("apple"), Some(&1));
 /// assert_eq!(sl.len(), 3);
 ///
-/// sl.remove(&"banana");
-/// assert_eq!(sl.get(&"banana"), None);
+/// sl.remove("banana");
+/// assert_eq!(sl.get("banana"), None);
 /// assert_eq!(sl.len(), 2);
 /// ```
 pub struct SkipList<K, V, R: RandomN = XorShift> {
@@ -253,7 +259,11 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
     }
 
     /// Returns `true` if the skiplist contains the given key.
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         self.get(key).is_some()
     }
 
@@ -271,14 +281,18 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
     /// # Time Complexity
     ///
     /// O(log n) on average.
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         let mut current: Option<usize> = None;
 
         for i in (0..=self.level).rev() {
             loop {
                 let next = self.forward_of(current, i);
                 match next {
-                    Some(idx) if self.node(idx).key < *key => current = Some(idx),
+                    Some(idx) if self.node(idx).key.borrow() < key => current = Some(idx),
                     _ => break,
                 }
             }
@@ -286,7 +300,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
 
         let candidate_idx = self.forward_of(current, 0)?;
         let candidate = self.node(candidate_idx);
-        if candidate.key == *key {
+        if candidate.key.borrow() == key {
             Some(&candidate.value)
         } else {
             None
@@ -363,24 +377,29 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
     /// # Time Complexity
     ///
     /// O(log n) on average.
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         self.update_buf.iter_mut().for_each(|slot| *slot = None);
 
         let mut current: Option<usize> = None;
 
         for i in (0..=self.level).rev() {
-            loop {
-                let next = self.forward_of(current, i);
-                match next {
-                    Some(idx) if self.node(idx).key < *key => current = Some(idx),
-                    _ => break,
+            // At each level, walk forward as far as possible while keys are less than the target
+            while let Some(idx) = self.forward_of(current, i) {
+                if self.node(idx).key.borrow() < key {
+                    current = Some(idx);
+                } else {
+                    break;
                 }
             }
             self.update_buf[i] = current;
         }
 
         let target_idx = self.forward_of(current, 0)?;
-        if self.node(target_idx).key != *key {
+        if self.node(target_idx).key.borrow() != key {
             return None;
         }
 
