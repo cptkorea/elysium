@@ -290,7 +290,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
 
         for i in (0..=self.level).rev() {
             loop {
-                let next = self.forward_of(current, i);
+                let next = self.forward_at(current, i);
                 match next {
                     Some(idx) if self.node(idx).key.borrow() < key => current = Some(idx),
                     _ => break,
@@ -298,7 +298,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
             }
         }
 
-        let candidate_idx = self.forward_of(current, 0)?;
+        let candidate_idx = self.forward_at(current, 0)?;
         let candidate = self.node(candidate_idx);
         if candidate.key.borrow() == key {
             Some(&candidate.value)
@@ -324,7 +324,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
 
         for i in (0..=self.level).rev() {
             loop {
-                let next = self.forward_of(current, i);
+                let next = self.forward_at(current, i);
                 match next {
                     Some(idx) if self.node(idx).key < key => current = Some(idx),
                     _ => break,
@@ -334,7 +334,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
         }
 
         // If the key already exists at level 0, update its value in place.
-        if let Some(idx) = self.forward_of(current, 0) {
+        if let Some(idx) = self.forward_at(current, 0) {
             if self.node(idx).key == key {
                 let old = std::mem::replace(&mut self.node_mut(idx).value, value);
                 return Some(old);
@@ -359,7 +359,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
         // Wire the new node into each level it participates in by splicing
         // it between its predecessor and successor.
         for i in 0..=new_level {
-            let prev_next = self.forward_of(self.update_buf[i], i);
+            let prev_next = self.forward_at(self.update_buf[i], i);
             self.node_mut(node_idx).forward[i] = prev_next;
             self.set_forward(self.update_buf[i], i, Some(node_idx));
         }
@@ -388,7 +388,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
 
         for i in (0..=self.level).rev() {
             // At each level, walk forward as far as possible while keys are less than the target
-            while let Some(idx) = self.forward_of(current, i) {
+            while let Some(idx) = self.forward_at(current, i) {
                 if self.node(idx).key.borrow() < key {
                     current = Some(idx);
                 } else {
@@ -398,7 +398,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
             self.update_buf[i] = current;
         }
 
-        let target_idx = self.forward_of(current, 0)?;
+        let target_idx = self.forward_at(current, 0)?;
         if self.node(target_idx).key.borrow() != key {
             return None;
         }
@@ -425,7 +425,7 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
 
     /// Returns the forward pointer at `level` for the given position.
     /// `None` as `pos` represents the head sentinel.
-    fn forward_of(&self, pos: Option<usize>, level: usize) -> Option<usize> {
+    fn forward_at(&self, pos: Option<usize>, level: usize) -> Option<usize> {
         match pos {
             None => self.head[level],
             Some(idx) => self.node(idx).forward[level],
