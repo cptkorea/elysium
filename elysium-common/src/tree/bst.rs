@@ -4,9 +4,6 @@ use super::{
 };
 use std::collections::VecDeque;
 
-#[cfg(test)]
-use super::iter::{LevelIter, NodeIter};
-
 #[derive(Default)]
 pub struct BinarySearchTree<T: Ord> {
     pub(super) root: Option<BoxedNode<T>>,
@@ -66,19 +63,22 @@ impl<T: Ord> BinarySearchTree<T> {
     }
 
     #[cfg(test)]
-    pub(super) fn level_iter<'a>(&'a self) -> LevelIter<'a, T> {
-        LevelIter {
-            curr: self.root.as_ref(),
-            queue: VecDeque::with_capacity(10),
+    pub(super) fn level_order_items(&self) -> Vec<&T> {
+        let mut result = Vec::new();
+        let mut queue = VecDeque::new();
+        if let Some(root) = self.root.as_ref() {
+            queue.push_back(root);
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn nodes_iter<'a>(&'a self) -> NodeIter<'a, T> {
-        NodeIter {
-            curr: self.root.as_ref(),
-            queue: VecDeque::with_capacity(10),
+        while let Some(node) = queue.pop_front() {
+            result.push(&node.item);
+            if let Some(left) = node.left.as_ref() {
+                queue.push_back(left);
+            }
+            if let Some(right) = node.right.as_ref() {
+                queue.push_back(right);
+            }
         }
+        result
     }
 
     #[cfg(test)]
@@ -196,11 +196,6 @@ mod test {
         insert_node(&mut tree, 3);
         insert_node(&mut tree, 1);
 
-        let mut level_iter = tree.level_iter();
-        assert_eq!(Some(&2), level_iter.next());
-        assert_eq!(Some(&1), level_iter.next());
-        assert_eq!(Some(&3), level_iter.next());
-        assert_eq!(None, level_iter.next());
-        assert_eq!(None, level_iter.next());
+        assert_eq!(tree.level_order_items(), vec![&2, &1, &3]);
     }
 }

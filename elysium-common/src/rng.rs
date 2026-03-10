@@ -9,7 +9,7 @@
 //! Implement [`RandomN`] to plug in any randomization strategy:
 //!
 //! ```
-//! use common::rng::RandomN;
+//! use elysium_common::rng::RandomN;
 //!
 //! struct Fixed(usize);
 //!
@@ -64,7 +64,7 @@ pub trait RandomN {
 /// For reproducible behavior (e.g. in tests), use [`XorShift::with_seed`]:
 ///
 /// ```
-/// use common::rng::XorShift;
+/// use elysium_common::rng::XorShift;
 ///
 /// let rng = XorShift::with_seed(0.5, 42);
 /// ```
