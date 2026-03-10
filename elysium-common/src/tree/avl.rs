@@ -5,8 +5,6 @@ use std::fmt::Debug;
 #[cfg(test)]
 use super::iter::{LevelIter, NodeIter};
 
-const BALANCE_THRESHOLD: i32 = 1;
-
 #[derive(Default)]
 pub struct AVLTree<T: Ord> {
     inner: BinarySearchTree<T>,
@@ -54,16 +52,12 @@ impl<T: Ord> AVLTree<T> {
 }
 
 trait AVLNode<T: Ord> {
-    const THRESHOLD: i32;
-
     fn balance(&self) -> Balance;
     fn insert(&mut self, value: T) -> Result<(), Error>;
     fn rotate(&mut self, direction: Orientation) -> Result<(), Error>;
 }
 
 impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
-    const THRESHOLD: i32 = BALANCE_THRESHOLD;
-
     fn balance(&self) -> Balance {
         let (lh, rh) = self.child_heights();
         match lh - rh {

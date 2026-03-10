@@ -66,7 +66,7 @@ impl<T: Ord> BinarySearchTree<T> {
     }
 
     #[cfg(test)]
-    pub(super) fn level_iter(&self) -> LevelIter<T> {
+    pub(super) fn level_iter<'a>(&'a self) -> LevelIter<'a, T> {
         LevelIter {
             curr: self.root.as_ref(),
             queue: VecDeque::with_capacity(10),
@@ -74,7 +74,7 @@ impl<T: Ord> BinarySearchTree<T> {
     }
 
     #[cfg(test)]
-    pub(super) fn nodes_iter(&self) -> NodeIter<T> {
+    pub(super) fn nodes_iter<'a>(&'a self) -> NodeIter<'a, T> {
         NodeIter {
             curr: self.root.as_ref(),
             queue: VecDeque::with_capacity(10),
