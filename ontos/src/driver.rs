@@ -1,18 +1,28 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
 
-use crate::db::{MemTable, SSTable};
+use crate::db::{MemTable, SSTable, SortedStore};
 use crate::Error;
 
-pub struct Driver {
-    master: MemTable,
+pub struct Driver<S: SortedStore<String, u32> = BTreeMap<String, u32>> {
+    master: MemTable<String, u32, S>,
     offset: usize,
 }
 
-impl Driver {
+impl Driver<BTreeMap<String, u32>> {
     pub fn new() -> Self {
         Self {
             master: MemTable::new(),
+            offset: 0,
+        }
+    }
+}
+
+impl<S: SortedStore<String, u32>> Driver<S> {
+    pub fn with_memtable(memtable: MemTable<String, u32, S>) -> Self {
+        Self {
+            master: memtable,
             offset: 0,
         }
     }
@@ -27,7 +37,7 @@ impl Driver {
 
     pub async fn flush_table(&mut self) -> Result<(), Error> {
         let sst = SSTable::from(&self.master);
-        self.master = MemTable::new();
+        self.master.clear();
 
         let bytes = sst.into_bytes()?;
         let offset = self.offset;

@@ -1,6 +1,8 @@
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
 use crate::Error;
+pub use crate::sorted_store::SortedStore;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_CAPACITY: usize = 10_000;
@@ -17,13 +19,15 @@ impl PartialEq for Entry {
     }
 }
 
-pub struct MemTable {
-    items: BTreeMap<String, u32>,
+pub struct MemTable<K: Ord, V, S: SortedStore<K, V> = BTreeMap<K, V>> {
+    items: S,
     size: usize,
     capacity: usize,
+    _key: std::marker::PhantomData<K>,
+    _value: std::marker::PhantomData<V>,
 }
 
-impl MemTable {
+impl<K: Ord, V> MemTable<K, V, BTreeMap<K, V>> {
     pub fn new() -> Self {
         Self::with_capacity(DEFAULT_CAPACITY)
     }
@@ -33,30 +37,55 @@ impl MemTable {
             items: BTreeMap::new(),
             size: 0,
             capacity,
+            _key: std::marker::PhantomData,
+            _value: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<K: Ord, V, S: SortedStore<K, V>> MemTable<K, V, S> {
+    pub fn with_store(capacity: usize, store: S) -> Self {
+        Self {
+            items: store,
+            size: 0,
+            capacity,
+            _key: std::marker::PhantomData,
+            _value: std::marker::PhantomData,
         }
     }
 
-    pub fn write(&mut self, key: String, value: u32) {
+    pub fn write(&mut self, key: K, value: V) {
         self.items.insert(key, value);
         self.size += 1;
     }
 
-    pub fn read<S: AsRef<str>>(&self, key: S) -> Option<&u32> {
-        self.items.get(key.as_ref())
+    pub fn read<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.items.get(key)
     }
 
+    pub fn at_capacity(&self) -> bool {
+        self.size >= self.capacity
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.size = 0;
+    }
+}
+
+impl<S: SortedStore<String, u32>> MemTable<String, u32, S> {
     pub fn items(&self) -> Vec<Entry> {
         self.items
-            .iter()
+            .iter_sorted()
             .map(|(k, v)| Entry {
                 key: k.to_owned(),
                 value: v.to_owned(),
             })
             .collect()
-    }
-
-    pub fn at_capacity(&self) -> bool {
-        self.size >= self.capacity
     }
 }
 
@@ -65,8 +94,8 @@ pub struct SSTable {
     entries: Vec<Entry>,
 }
 
-impl From<&MemTable> for SSTable {
-    fn from(value: &MemTable) -> Self {
+impl<S: SortedStore<String, u32>> From<&MemTable<String, u32, S>> for SSTable {
+    fn from(value: &MemTable<String, u32, S>) -> Self {
         SSTable {
             entries: value.items(),
         }
@@ -83,13 +112,13 @@ impl SSTable {
 mod test {
     use super::*;
 
-    fn write(m: &mut MemTable, key: &str, value: u32) {
+    fn write<S: SortedStore<String, u32>>(m: &mut MemTable<String, u32, S>, key: &str, value: u32) {
         m.write(String::from(key), value);
     }
 
     #[test]
     fn simple_read_write() {
-        let mut m = MemTable::new();
+        let mut m: MemTable<String, u32> = MemTable::new();
         write(&mut m, "apple", 1);
         write(&mut m, "banana", 2);
         write(&mut m, "cactus", 3);
@@ -108,7 +137,7 @@ mod test {
 
     #[test]
     fn items() {
-        let mut m = MemTable::new();
+        let mut m: MemTable<String, u32> = MemTable::new();
         write(&mut m, "apple", 1);
         write(&mut m, "banana", 2);
         write(&mut m, "cactus", 3);
