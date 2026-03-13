@@ -42,7 +42,7 @@ impl Driver {
 }
 
 fn write_sst(offset: usize, bytes: Vec<u8>) -> Result<(), Error> {
-    let path = format!("logos/{}.sst", offset);
+    let path = format!("ontos/{}.sst", offset);
     let mut file = File::create(path)?;
     file.write_all(&bytes)?;
     Ok(())

@@ -9,7 +9,7 @@
 //! Implement [`RandomN`] to plug in any randomization strategy:
 //!
 //! ```
-//! use common::rng::RandomN;
+//! use elysium_common::rng::RandomN;
 //!
 //! struct Fixed(usize);
 //!
@@ -64,7 +64,7 @@ pub trait RandomN {
 /// For reproducible behavior (e.g. in tests), use [`XorShift::with_seed`]:
 ///
 /// ```
-/// use common::rng::XorShift;
+/// use elysium_common::rng::XorShift;
 ///
 /// let rng = XorShift::with_seed(0.5, 42);
 /// ```
@@ -91,7 +91,11 @@ impl XorShift {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        let state = if seed == 0 { 0xDEAD_BEEF_CAFE_BABE } else { seed };
+        let state = if seed == 0 {
+            0xDEAD_BEEF_CAFE_BABE
+        } else {
+            seed
+        };
         Self { state, probability }
     }
 
@@ -107,7 +111,11 @@ impl XorShift {
             probability > 0.0 && probability < 1.0,
             "probability must be in (0.0, 1.0), got {probability}"
         );
-        let state = if seed == 0 { 0xDEAD_BEEF_CAFE_BABE } else { seed };
+        let state = if seed == 0 {
+            0xDEAD_BEEF_CAFE_BABE
+        } else {
+            seed
+        };
         Self { state, probability }
     }
 

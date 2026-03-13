@@ -28,7 +28,7 @@
 //! # Quick Start
 //!
 //! ```
-//! use common::skiplist::SkipList;
+//! use elysium_common::skiplist::SkipList;
 //!
 //! let mut list = SkipList::new();
 //! list.insert(3, "three");
@@ -115,7 +115,7 @@ struct Node<K, V> {
 /// # Examples
 ///
 /// ```
-/// use common::skiplist::SkipList;
+/// use elysium_common::skiplist::SkipList;
 ///
 /// let mut sl = SkipList::new();
 /// sl.insert("banana", 2);
@@ -173,7 +173,7 @@ impl<K: Ord, V> SkipList<K, V, XorShift> {
     /// This is the simplest way to get started:
     ///
     /// ```
-    /// use common::skiplist::SkipList;
+    /// use elysium_common::skiplist::SkipList;
     ///
     /// let mut sl: SkipList<i32, &str> = SkipList::new();
     /// sl.insert(1, "hello");
@@ -195,7 +195,7 @@ impl<K: Ord, V> SkipList<K, V, XorShift> {
     /// # Examples
     ///
     /// ```
-    /// use common::skiplist::SkipList;
+    /// use elysium_common::skiplist::SkipList;
     ///
     /// // Optimized for up to ~1 million elements
     /// let sl: SkipList<u64, String> = SkipList::with_max_level(20);
@@ -226,8 +226,8 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
     /// # Examples
     ///
     /// ```
-    /// use common::skiplist::XorShift;
-    /// use common::skiplist::SkipList;
+    /// use elysium_common::skiplist::XorShift;
+    /// use elysium_common::skiplist::SkipList;
     ///
     /// // Lower probability = flatter lists (more nodes at level 0, fewer express lanes)
     /// let rng = XorShift::with_seed(0.25, 12345);

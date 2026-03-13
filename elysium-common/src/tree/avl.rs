@@ -1,11 +1,6 @@
-use super::{bst::BinarySearchTree, BinaryTreeNode, Error, Orientation};
+use super::{BinaryTreeNode, Error, Orientation, bst::BinarySearchTree};
 use std::cmp::Ordering;
 use std::fmt::Debug;
-
-#[cfg(test)]
-use super::iter::{LevelIter, NodeIter};
-
-const BALANCE_THRESHOLD: i32 = 1;
 
 #[derive(Default)]
 pub struct AVLTree<T: Ord> {
@@ -33,18 +28,17 @@ impl<T: Ord> AVLTree<T> {
 
     #[cfg(test)]
     fn is_balanced(&self) -> bool {
-        self.nodes_iter()
-            .all(|n| AVLNode::balance(n.as_ref()) == Balance::Balanced)
+        fn check<T: Ord>(node: &BinaryTreeNode<T>) -> bool {
+            AVLNode::balance(node) == Balance::Balanced
+                && node.left.as_ref().map_or(true, |l| check(l))
+                && node.right.as_ref().map_or(true, |r| check(r))
+        }
+        self.inner.root.as_ref().map_or(true, |r| check(r))
     }
 
     #[cfg(test)]
-    fn level_iter(&self) -> LevelIter<'_, T> {
-        self.inner.level_iter()
-    }
-
-    #[cfg(test)]
-    fn nodes_iter(&self) -> NodeIter<'_, T> {
-        self.inner.nodes_iter()
+    fn level_order_items(&self) -> Vec<&T> {
+        self.inner.level_order_items()
     }
 
     #[cfg(test)]
@@ -54,16 +48,12 @@ impl<T: Ord> AVLTree<T> {
 }
 
 trait AVLNode<T: Ord> {
-    const THRESHOLD: i32;
-
     fn balance(&self) -> Balance;
     fn insert(&mut self, value: T) -> Result<(), Error>;
     fn rotate(&mut self, direction: Orientation) -> Result<(), Error>;
 }
 
 impl<T: Ord> AVLNode<T> for BinaryTreeNode<T> {
-    const THRESHOLD: i32 = BALANCE_THRESHOLD;
-
     fn balance(&self) -> Balance {
         let (lh, rh) = self.child_heights();
         match lh - rh {
@@ -204,8 +194,7 @@ mod test {
             assert!(tree.is_balanced());
         }
 
-        let nodes: Vec<&u32> = tree.level_iter().collect();
-        assert_eq!(vec![&4, &2, &6, &1, &3, &5, &7], nodes);
+        assert_eq!(tree.level_order_items(), vec![&4, &2, &6, &1, &3, &5, &7]);
     }
 
     #[test]
@@ -219,10 +208,6 @@ mod test {
         assert_eq!(3, tree.size());
         assert_eq!(1, tree.height());
 
-        let mut level_iter = tree.level_iter();
-        assert_eq!(Some(&2), level_iter.next());
-        assert_eq!(Some(&1), level_iter.next());
-        assert_eq!(Some(&3), level_iter.next());
-        assert_eq!(None, level_iter.next());
+        assert_eq!(tree.level_order_items(), vec![&2, &1, &3]);
     }
 }
