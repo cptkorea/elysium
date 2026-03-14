@@ -11,10 +11,12 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
+    - name: Build CI image
+      run: docker build -t elysium-ci -f .github/Dockerfile.ci .
     - name: Build
-      run: cargo build --verbose
+      run: docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace elysium-ci cargo build --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace elysium-ci cargo test --verbose
