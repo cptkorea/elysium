@@ -161,6 +161,23 @@ pub struct SkipList<K, V, R: RandomN = XorShift> {
     update_buf: Vec<Option<usize>>,
 }
 
+/// Iterator over skiplist entries in ascending key order.
+pub struct Iter<'a, K: Ord, V, R: RandomN = XorShift> {
+    list: &'a SkipList<K, V, R>,
+    current: Option<usize>,
+}
+
+impl<'a, K: Ord, V, R: RandomN> Iterator for Iter<'a, K, V, R> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let idx = self.current?;
+        let node = self.list.node(idx);
+        self.current = node.forward[0];
+        Some((&node.key, &node.value))
+    }
+}
+
 // -- Convenience constructors (XorShift default) ----------------------------
 
 impl<K: Ord, V> SkipList<K, V, XorShift> {
@@ -270,6 +287,14 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
     /// Returns the configured maximum level for this skiplist.
     pub fn max_level(&self) -> usize {
         self.max_level
+    }
+
+    /// Returns an iterator over all entries in ascending key order.
+    pub fn iter(&self) -> Iter<'_, K, V, R> {
+        Iter {
+            list: self,
+            current: self.head[0],
+        }
     }
 
     /// Returns a reference to the value associated with `key`, or `None` if
@@ -421,6 +446,16 @@ impl<K: Ord, V, R: RandomN> SkipList<K, V, R> {
         self.free_list.push(target_idx);
         self.len -= 1;
         Some(removed.value)
+    }
+
+    /// Removes all entries from the skiplist while retaining allocated buffers.
+    pub fn clear(&mut self) {
+        self.head.fill(None);
+        self.arena.clear();
+        self.free_list.clear();
+        self.level = 0;
+        self.len = 0;
+        self.update_buf.fill(None);
     }
 
     // -- Private helpers ----------------------------------------------------
@@ -767,5 +802,30 @@ mod tests {
         assert_eq!(sl.remove(&1), None);
         assert_eq!(sl.len(), 1);
         assert_eq!(sl.get(&2), Some(&"two"));
+    }
+
+    #[test]
+    fn iter_sorted_order() {
+        let mut sl = seeded_list();
+        sl.insert(3, "three");
+        sl.insert(1, "one");
+        sl.insert(2, "two");
+
+        let items: Vec<(&i32, &&str)> = sl.iter().collect();
+        assert_eq!(items, vec![(&1, &"one"), (&2, &"two"), (&3, &"three")]);
+    }
+
+    #[test]
+    fn clear_resets_state() {
+        let mut sl = seeded_list();
+        sl.insert(1, "one");
+        sl.insert(2, "two");
+        assert_eq!(sl.len(), 2);
+
+        sl.clear();
+        assert!(sl.is_empty());
+        assert_eq!(sl.len(), 0);
+        assert_eq!(sl.get(&1), None);
+        assert_eq!(sl.iter().count(), 0);
     }
 }

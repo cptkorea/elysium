@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 
+use elysium_common::skiplist::{Iter as SkipListIter, RandomN, SkipList};
+
 /// A simple sorted key-value storage interface used by `MemTable` that can
 /// be swapped through configuration.
 ///
@@ -51,5 +53,34 @@ impl<K: Ord, V> SortedStore<K, V> for BTreeMap<K, V> {
 
     fn clear(&mut self) {
         BTreeMap::clear(self);
+    }
+}
+
+impl<K: Ord, V, R: RandomN> SortedStore<K, V> for SkipList<K, V, R> {
+    type Iter<'a>
+        = SkipListIter<'a, K, V, R>
+    where
+        Self: 'a,
+        K: 'a,
+        V: 'a;
+
+    fn insert(&mut self, key: K, value: V) {
+        let _ = SkipList::insert(self, key, value);
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        SkipList::get(self, key)
+    }
+
+    fn iter_sorted(&self) -> Self::Iter<'_> {
+        SkipList::iter(self)
+    }
+
+    fn clear(&mut self) {
+        SkipList::clear(self);
     }
 }
