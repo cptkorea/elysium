@@ -1,0 +1,9 @@
+[package]
+name = "integration_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ontos = { path = "../ontos" }
+elysium-common = { path = "../elysium-common" }
+tokio = { version = "1.32", features = ["rt", "rt-multi-thread", "macros"] }
