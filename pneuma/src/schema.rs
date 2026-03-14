@@ -5,32 +5,44 @@ use serde::Deserialize;
 
 use crate::Error;
 
+/// Top-level definition for a scheduled workflow, deserialized from a single YAML file.
+/// Workflows contain an ordered list of stages that define the execution DAG.
 #[derive(Debug, Deserialize)]
 pub struct ScheduledWorkflow {
     pub name: String,
     pub stages: Vec<WorkflowStage>,
 }
 
+/// A named group of tasks within a workflow. Stages execute sequentially:
+/// all tasks in stage N must complete before any task in stage N+1 begins.
+/// Tasks within the same stage run independently unless constrained by `depends_on`.
 #[derive(Debug, Deserialize)]
 pub struct WorkflowStage {
     pub name: String,
-    pub tasks: HashMap<String, TaskDef>,
+    pub tasks: HashMap<String, WorkflowTask>,
 }
 
+/// A single schedulable unit of work within a stage.
 #[derive(Debug, Deserialize)]
-pub struct TaskDef {
+pub struct WorkflowTask {
+    /// How often this task should fire, in seconds.
     pub interval_secs: u64,
+    /// Optional intra-stage dependency references. Each entry must name another
+    /// task within the same workflow. Use this when two tasks share a stage but
+    /// one must run before the other.
     #[serde(default)]
     pub depends_on: Vec<String>,
 }
 
 impl ScheduledWorkflow {
+    /// Deserialize a [`ScheduledWorkflow`] from a YAML file on disk.
     pub fn from_yaml(path: &Path) -> Result<Self, Error> {
         let contents = std::fs::read_to_string(path)?;
         let workflow: ScheduledWorkflow = serde_yml::from_str(&contents)?;
         Ok(workflow)
     }
 
+    /// Returns the names of every task across all stages in this workflow.
     pub fn all_task_names(&self) -> Vec<&str> {
         self.stages
             .iter()
@@ -39,6 +51,7 @@ impl ScheduledWorkflow {
     }
 }
 
+/// Load all `*.yaml` files from a directory, deserializing each as a [`ScheduledWorkflow`].
 pub fn load_workflows(dir: &Path) -> Result<Vec<ScheduledWorkflow>, Error> {
     let mut workflows = Vec::new();
     for entry in std::fs::read_dir(dir)? {
