@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::dag::Dag;
-use crate::schema::WorkflowDef;
+use crate::schema::ScheduledWorkflow;
 use crate::Error;
 
 struct TaskState {
@@ -21,7 +21,7 @@ struct ResolvedWorkflow {
 }
 
 impl Scheduler {
-    pub fn new(workflows: Vec<WorkflowDef>) -> Result<Self, Error> {
+    pub fn new(workflows: Vec<ScheduledWorkflow>) -> Result<Self, Error> {
         let mut resolved = Vec::new();
 
         for workflow in &workflows {
@@ -85,9 +85,9 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::WorkflowDef;
+    use crate::schema::ScheduledWorkflow;
 
-    fn parse_workflow(yaml: &str) -> WorkflowDef {
+    fn parse_workflow(yaml: &str) -> ScheduledWorkflow {
         serde_yml::from_str(yaml).unwrap()
     }
 

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::schema::WorkflowDef;
+use crate::schema::ScheduledWorkflow;
 use crate::Error;
 
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub struct Dag {
 }
 
 impl Dag {
-    pub fn from_workflow(workflow: &WorkflowDef) -> Result<Self, Error> {
+    pub fn from_workflow(workflow: &ScheduledWorkflow) -> Result<Self, Error> {
         let mut dependencies: HashMap<String, Vec<String>> = HashMap::new();
         let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
         let mut nodes = HashSet::new();
@@ -114,9 +114,9 @@ impl Dag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::WorkflowDef;
+    use crate::schema::ScheduledWorkflow;
 
-    fn parse_workflow(yaml: &str) -> WorkflowDef {
+    fn parse_workflow(yaml: &str) -> ScheduledWorkflow {
         serde_yml::from_str(yaml).unwrap()
     }
 

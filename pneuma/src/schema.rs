@@ -6,13 +6,13 @@ use serde::Deserialize;
 use crate::Error;
 
 #[derive(Debug, Deserialize)]
-pub struct WorkflowDef {
+pub struct ScheduledWorkflow {
     pub name: String,
-    pub stages: Vec<StageDef>,
+    pub stages: Vec<WorkflowStage>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct StageDef {
+pub struct WorkflowStage {
     pub name: String,
     pub tasks: HashMap<String, TaskDef>,
 }
@@ -24,10 +24,10 @@ pub struct TaskDef {
     pub depends_on: Vec<String>,
 }
 
-impl WorkflowDef {
+impl ScheduledWorkflow {
     pub fn from_yaml(path: &Path) -> Result<Self, Error> {
         let contents = std::fs::read_to_string(path)?;
-        let workflow: WorkflowDef = serde_yml::from_str(&contents)?;
+        let workflow: ScheduledWorkflow = serde_yml::from_str(&contents)?;
         Ok(workflow)
     }
 
@@ -39,13 +39,13 @@ impl WorkflowDef {
     }
 }
 
-pub fn load_workflows(dir: &Path) -> Result<Vec<WorkflowDef>, Error> {
+pub fn load_workflows(dir: &Path) -> Result<Vec<ScheduledWorkflow>, Error> {
     let mut workflows = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            workflows.push(WorkflowDef::from_yaml(&path)?);
+            workflows.push(ScheduledWorkflow::from_yaml(&path)?);
         }
     }
     Ok(workflows)
@@ -77,7 +77,7 @@ stages:
       write_to_db:
         interval_secs: 120
 "#;
-        let workflow: WorkflowDef = serde_yml::from_str(yaml).unwrap();
+        let workflow: ScheduledWorkflow = serde_yml::from_str(yaml).unwrap();
 
         assert_eq!(workflow.name, "etl");
         assert_eq!(workflow.stages.len(), 3);
@@ -104,7 +104,7 @@ stages:
         depends_on:
           - a
 "#;
-        let workflow: WorkflowDef = serde_yml::from_str(yaml).unwrap();
+        let workflow: ScheduledWorkflow = serde_yml::from_str(yaml).unwrap();
         let task_b = &workflow.stages[0].tasks["b"];
         assert_eq!(task_b.depends_on, vec!["a"]);
     }
