@@ -1,8 +1,8 @@
 //! # Raft State Machine — Replicated Key-Value Store
 //!
 //! This module implements [`openraft::RaftStateMachine`] backed by an in-memory
-//! `BTreeMap<Vec<u8>, Vec<u8>>`. Each committed [`Command`] is applied in log
-//! order across every node, guaranteeing linearizable reads through the leader.
+//! `BTreeMap<Key, Value>`. Each committed [`Command`] is applied in log order
+//! across every node, guaranteeing linearizable reads through the leader.
 //!
 //! ## Lifecycle
 //!
@@ -16,8 +16,8 @@
 //! use logos::state_machine::{StateMachine, StateMachineData};
 //!
 //! let mut sm = StateMachine::default();
-//! // After applying Command::Put { key: b"k".to_vec(), value: b"v".to_vec() }
-//! // through Raft, the KV store will contain ("k" -> "v").
+//! // After applying Command::Put { key: Key::from("k"), value: Value::from("v") }
+//! // through Raft, the KV store will contain (Key("k") -> Value("v")).
 //! assert!(sm.data().kv.is_empty()); // empty until entries are applied
 //! ```
 
@@ -31,7 +31,7 @@ use openraft::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Command, CommandResponse, TypeConfig};
+use crate::{Command, CommandResponse, Key, TypeConfig, Value};
 
 /// Converts an arbitrary [`std::error::Error`] into an [`openraft::StorageError`]
 /// tagged as a state-machine I/O error.
@@ -74,10 +74,10 @@ pub struct StateMachineData {
     /// The cluster membership configuration as of the last applied entry.
     pub last_membership: StoredMembership<u64, openraft::BasicNode>,
 
-    /// The replicated key-value store. Keys and values are opaque byte
-    /// vectors, leaving interpretation to higher-level consumers (e.g. pneuma
-    /// stores `"scheduler/{workflow}/{task}" -> timestamp_ms`).
-    pub kv: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The replicated key-value store. [`Key`]s and [`Value`]s are opaque byte
+    /// wrappers, leaving interpretation to higher-level consumers (e.g. pneuma
+    /// stores `Key("scheduler/{workflow}/{task}") -> Value(timestamp_ms)`).
+    pub kv: BTreeMap<Key, Value>,
 }
 
 /// The Raft state machine that applies committed log entries to a local
