@@ -1,0 +1,11 @@
+syntax = "proto3";
+package pneuma.raft;
+
+service RaftService {
+    rpc Vote(RaftRequest) returns (RaftResponse);
+    rpc AppendEntries(RaftRequest) returns (RaftResponse);
+    rpc Snapshot(RaftRequest) returns (RaftResponse);
+}
+
+message RaftRequest { bytes data = 1; }
+message RaftResponse { bytes data = 1; }
