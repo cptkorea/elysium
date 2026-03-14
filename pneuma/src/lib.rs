@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 pub mod dag;
-pub mod raft;
 pub mod schema;
 pub mod scheduler;
 

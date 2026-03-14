@@ -1,5 +1,5 @@
 syntax = "proto3";
-package pneuma.raft;
+package logos.raft;
 
 service RaftService {
     rpc Vote(RaftRequest) returns (RaftResponse);

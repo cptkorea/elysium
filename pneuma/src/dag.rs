@@ -63,6 +63,43 @@ impl Dag {
         })
     }
 
+    /// Tasks with no dependencies (entry points of the DAG).
+    pub fn roots(&self) -> Vec<&str> {
+        self.nodes
+            .iter()
+            .filter(|n| self.dependencies.get(n.as_str()).map_or(true, |d| d.is_empty()))
+            .map(|n| n.as_str())
+            .collect()
+    }
+
+    /// Tasks with no dependents (terminal tasks of the DAG).
+    pub fn leaves(&self) -> Vec<&str> {
+        self.nodes
+            .iter()
+            .filter(|n| self.dependents.get(n.as_str()).map_or(true, |d| d.is_empty()))
+            .map(|n| n.as_str())
+            .collect()
+    }
+
+    /// Direct upstream dependencies of a task.
+    pub fn dependencies_of(&self, task: &str) -> &[String] {
+        self.dependencies.get(task).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Direct downstream dependents of a task.
+    pub fn dependents_of(&self, task: &str) -> &[String] {
+        self.dependents.get(task).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Total number of tasks in the DAG.
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
     /// Returns tasks in a valid execution order using Kahn's algorithm.
     pub fn execution_order(&self) -> Result<Vec<String>, Error> {
         let mut in_degree: HashMap<&str, usize> = HashMap::new();
@@ -177,6 +214,88 @@ stages:
 
         let pos = |name: &str| order.iter().position(|n| n == name).unwrap();
         assert!(pos("a") < pos("b"));
+    }
+
+    #[test]
+    fn roots_and_leaves() {
+        let workflow = parse_workflow(
+            r#"
+name: test
+stages:
+  - name: first
+    tasks:
+      a:
+        interval_secs: 10
+      b:
+        interval_secs: 10
+  - name: second
+    tasks:
+      c:
+        interval_secs: 10
+  - name: third
+    tasks:
+      d:
+        interval_secs: 10
+"#,
+        );
+
+        let dag = Dag::from_workflow(&workflow).unwrap();
+
+        let mut roots = dag.roots();
+        roots.sort();
+        assert_eq!(roots, vec!["a", "b"]);
+
+        assert_eq!(dag.leaves(), vec!["d"]);
+    }
+
+    #[test]
+    fn dependencies_and_dependents() {
+        let workflow = parse_workflow(
+            r#"
+name: test
+stages:
+  - name: first
+    tasks:
+      a:
+        interval_secs: 10
+  - name: second
+    tasks:
+      b:
+        interval_secs: 10
+      c:
+        interval_secs: 10
+"#,
+        );
+
+        let dag = Dag::from_workflow(&workflow).unwrap();
+
+        assert_eq!(dag.dependencies_of("a"), &[] as &[String]);
+        assert_eq!(dag.dependencies_of("b"), &["a".to_string()]);
+        assert_eq!(dag.dependencies_of("c"), &["a".to_string()]);
+
+        let mut a_dependents = dag.dependents_of("a").to_vec();
+        a_dependents.sort();
+        assert_eq!(a_dependents, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let workflow = parse_workflow(
+            r#"
+name: test
+stages:
+  - name: only
+    tasks:
+      a:
+        interval_secs: 10
+      b:
+        interval_secs: 10
+"#,
+        );
+
+        let dag = Dag::from_workflow(&workflow).unwrap();
+        assert_eq!(dag.len(), 2);
+        assert!(!dag.is_empty());
     }
 
     #[test]
