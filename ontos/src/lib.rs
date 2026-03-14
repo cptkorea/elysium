@@ -2,6 +2,8 @@ use thiserror::Error;
 
 pub mod db;
 pub mod driver;
+#[path = "sorted-store.rs"]
+pub mod sorted_store;
 
 #[derive(Debug, Error)]
 pub enum Error {
