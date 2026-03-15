@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use elysium_common::dag::DirectedAcyclicGraph;
@@ -20,7 +20,7 @@ pub struct ScheduledWorkflow {
 #[derive(Debug, Deserialize)]
 pub struct WorkflowStage {
     pub name: String,
-    pub tasks: HashMap<String, WorkflowTask>,
+    pub tasks: BTreeMap<String, WorkflowTask>,
 }
 
 /// A single schedulable unit of work within a stage.

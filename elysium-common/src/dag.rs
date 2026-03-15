@@ -156,7 +156,26 @@ impl DirectedAcyclicGraph {
         self.names.is_empty()
     }
 
-    /// Returns nodes in a valid execution order using
+    /// Returns the index of a node by name, or `None` if not in the graph.
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.index_of.get(name).copied()
+    }
+
+    /// Returns the name of the node at `index`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    pub fn name_of(&self, index: usize) -> &str {
+        &self.names[index]
+    }
+
+    /// Consumes the graph and returns the interned node name table.
+    pub fn into_names(self) -> Vec<String> {
+        self.names
+    }
+
+    /// Returns node indices in a valid execution order using
     /// [Kahn's algorithm](https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm).
     ///
     /// The algorithm maintains an in-degree count for each node. Nodes with
@@ -171,7 +190,7 @@ impl DirectedAcyclicGraph {
     ///
     /// Returns [`Error::CycleDetected`] listing the nodes involved in the
     /// cycle if a valid topological ordering cannot be produced.
-    pub fn execution_order(&self) -> Result<Vec<String>, Error> {
+    pub fn execution_order_indices(&self) -> Result<Vec<usize>, Error> {
         let n = self.names.len();
         let mut in_degree: Vec<usize> = self.dependencies.iter().map(|d| d.len()).collect();
 
@@ -202,6 +221,15 @@ impl DirectedAcyclicGraph {
             return Err(Error::CycleDetected(remaining.join(", ")));
         }
 
-        Ok(order.into_iter().map(|i| self.names[i].clone()).collect())
+        Ok(order)
+    }
+
+    /// Returns node names in a valid execution order.
+    ///
+    /// Convenience wrapper around [`execution_order_indices`](Self::execution_order_indices)
+    /// that maps indices back to owned name strings.
+    pub fn execution_order(&self) -> Result<Vec<String>, Error> {
+        self.execution_order_indices()
+            .map(|indices| indices.into_iter().map(|i| self.names[i].clone()).collect())
     }
 }

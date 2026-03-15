@@ -12,7 +12,7 @@
 //!   elapsed time exceeds its configured `interval_secs`.
 //!
 //! - **Execution order**: Tasks are visited in the topological order
-//!   produced by [`DirectedAcyclicGraph::execution_order`](crate::dag::DirectedAcyclicGraph::execution_order),
+//!   produced by [`DirectedAcyclicGraph::execution_order_indices`](elysium_common::dag::DirectedAcyclicGraph::execution_order_indices),
 //!   ensuring that dependencies are evaluated (and eventually executed)
 //!   before their dependents.
 //!
@@ -33,7 +33,6 @@
 //! scheduler.run().await; // blocks forever, ticking every second
 //! ```
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::schema::ScheduledWorkflow;
@@ -80,23 +79,29 @@ pub struct Pyra {
 /// A workflow whose DAG has been validated and flattened into a linear
 /// execution order.
 ///
-/// The `execution_order` vector lists task names in topological order —
-/// stage boundaries are implicit (all tasks from stage N appear before
-/// any task from stage N+1). The `tasks` map holds the per-task timing
-/// state keyed by task name.
+/// Task names and timing state are stored in parallel `Vec`s indexed by
+/// the same `usize` node indices used internally by the DAG. The
+/// `execution_order` vector lists those indices in topological order,
+/// so the heartbeat loop can iterate with pure index arithmetic — no
+/// string hashing or map lookups on the hot path.
 struct ResolvedWorkflow {
     name: String,
-    execution_order: Vec<String>,
-    tasks: HashMap<String, TaskState>,
+    /// Interned task names, indexed by DAG node id.
+    task_names: Vec<String>,
+    /// Topologically sorted DAG node indices.
+    execution_order: Vec<usize>,
+    /// Per-task timing state, indexed by DAG node id.
+    tasks: Vec<TaskState>,
 }
 
 impl Pyra {
     /// Creates a new scheduler from a list of workflow definitions.
     ///
     /// For each workflow, this:
-    /// 1. Builds the dependency graph via [`DirectedAcyclicGraph::from_workflow`].
-    /// 2. Computes a topological execution order via [`DirectedAcyclicGraph::execution_order`].
-    /// 3. Extracts per-task intervals into [`TaskState`] with `last_run: None`.
+    /// 1. Builds the dependency graph via [`ScheduledWorkflow::to_dag`].
+    /// 2. Computes a topological execution order as node indices.
+    /// 3. Extracts per-task intervals into a `Vec<TaskState>` aligned with
+    ///    the DAG's node indices.
     ///
     /// Returns an error if any workflow contains an unknown dependency
     /// reference or a cycle.
@@ -105,25 +110,24 @@ impl Pyra {
 
         for workflow in &workflows {
             let dag = workflow.to_dag()?;
-            let order = dag.execution_order()?;
+            let order = dag.execution_order_indices()?;
 
-            let mut tasks = HashMap::new();
+            let mut tasks: Vec<Option<TaskState>> = (0..dag.len()).map(|_| None).collect();
             for stage in &workflow.stages {
                 for (name, def) in &stage.tasks {
-                    tasks.insert(
-                        name.clone(),
-                        TaskState {
-                            interval: Duration::from_secs(def.interval_secs),
-                            last_run: None,
-                        },
-                    );
+                    let idx = dag.index_of(name).expect("task must exist in DAG");
+                    tasks[idx] = Some(TaskState {
+                        interval: Duration::from_secs(def.interval_secs),
+                        last_run: None,
+                    });
                 }
             }
 
             resolved.push(ResolvedWorkflow {
                 name: workflow.name.clone(),
+                task_names: dag.into_names(),
                 execution_order: order,
-                tasks,
+                tasks: tasks.into_iter().map(|t| t.expect("all DAG nodes must have a task definition")).collect(),
             });
         }
 
@@ -148,20 +152,19 @@ impl Pyra {
             let now = Instant::now();
 
             for workflow in &mut self.workflows {
-                for task_name in &workflow.execution_order {
-                    if let Some(state) = workflow.tasks.get_mut(task_name) {
-                        let due = match state.last_run {
-                            None => true,
-                            Some(last) => now.duration_since(last) >= state.interval,
-                        };
+                for &idx in &workflow.execution_order {
+                    let state = &mut workflow.tasks[idx];
+                    let due = match state.last_run {
+                        None => true,
+                        Some(last) => now.duration_since(last) >= state.interval,
+                    };
 
-                        if due {
-                            println!(
-                                "[pneuma] workflow={} task={} status=fired",
-                                workflow.name, task_name
-                            );
-                            state.last_run = Some(now);
-                        }
+                    if due {
+                        println!(
+                            "[pneuma] workflow={} task={} status=fired",
+                            workflow.name, workflow.task_names[idx]
+                        );
+                        state.last_run = Some(now);
                     }
                 }
             }
