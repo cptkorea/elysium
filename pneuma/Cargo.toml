@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+elysium-common = { path = "../elysium-common" }
 logos = { path = "../logos" }
 ontos = { path = "../ontos" }
 serde = { version = "1.0", features = ["derive"] }

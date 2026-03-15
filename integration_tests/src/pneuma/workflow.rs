@@ -3,9 +3,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use pneuma::dag::Dag;
     use pneuma::schema::ScheduledWorkflow;
-    use pneuma::scheduler::Scheduler;
+    use pneuma::scheduler::Pyra;
 
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,7 +22,7 @@ mod tests {
     #[test]
     fn dag_respects_stage_order() {
         let workflow = ScheduledWorkflow::from_yaml(&fixture("etl.yaml")).unwrap();
-        let dag = Dag::from_workflow(&workflow).unwrap();
+        let dag = workflow.to_dag().unwrap();
         let order = dag.execution_order().unwrap();
 
         let pos = |name: &str| order.iter().position(|n| n == name).unwrap();
@@ -38,7 +37,7 @@ mod tests {
     #[tokio::test]
     async fn scheduler_runs_without_panic() {
         let workflow = ScheduledWorkflow::from_yaml(&fixture("etl.yaml")).unwrap();
-        let mut scheduler = Scheduler::new(vec![workflow]).unwrap();
+        let mut scheduler = Pyra::new(vec![workflow]).unwrap();
 
         let handle = tokio::spawn(async move {
             scheduler.run().await;

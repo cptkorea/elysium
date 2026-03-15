@@ -1,8 +1,7 @@
 use thiserror::Error;
 
-pub mod dag;
-pub mod schema;
 pub mod scheduler;
+pub mod schema;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -12,6 +11,6 @@ pub enum Error {
     ParseError(#[from] serde_yml::Error),
     #[error("unknown task \"{0}\" referenced in depends_on")]
     UnknownTask(String),
-    #[error("cycle detected involving task \"{0}\"")]
-    CycleDetected(String),
+    #[error(transparent)]
+    Dag(#[from] elysium_common::dag::Error),
 }
