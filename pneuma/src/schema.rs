@@ -61,7 +61,7 @@ impl ScheduledWorkflow {
     ///
     /// Returns [`Error::UnknownTask`] if any `depends_on` entry references
     /// a task name that doesn't exist in the workflow.
-    pub fn to_dag(&self) -> Result<DirectedAcyclicGraph, Error> {
+    pub fn to_dag(&self) -> Result<DirectedAcyclicGraph<String>, Error> {
         let mut names = Vec::new();
         let mut index_of: HashMap<String, usize> = HashMap::new();
 
@@ -271,13 +271,14 @@ stages:
         );
 
         let dag = workflow.to_dag().unwrap();
+        let idx = |name: &str| dag.nodes().iter().position(|n| n == name).unwrap();
 
-        let empty: Vec<&str> = vec![];
-        assert_eq!(dag.dependencies_of("a"), empty);
-        assert_eq!(dag.dependencies_of("b"), vec!["a"]);
-        assert_eq!(dag.dependencies_of("c"), vec!["a"]);
+        let empty: Vec<&String> = vec![];
+        assert_eq!(dag.dependencies_of(idx("a")), empty);
+        assert_eq!(dag.dependencies_of(idx("b")), vec!["a"]);
+        assert_eq!(dag.dependencies_of(idx("c")), vec!["a"]);
 
-        let mut a_dependents = dag.dependents_of("a");
+        let mut a_dependents = dag.dependents_of(idx("a"));
         a_dependents.sort();
         assert_eq!(a_dependents, vec!["b", "c"]);
     }

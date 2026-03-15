@@ -1,7 +1,7 @@
 //! # Directed Acyclic Graph — Dependency Resolution
 //!
 //! This module provides a [`DirectedAcyclicGraph`] for modelling and resolving
-//! ordered dependencies between string-keyed nodes. The graph maintains
+//! ordered dependencies between nodes of any type. The graph maintains
 //! forward and reverse adjacency lists and supports:
 //!
 //! - Root / leaf discovery
@@ -10,62 +10,49 @@
 //!   [Kahn's algorithm](https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm)
 //!   (which doubles as cycle detection)
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
+use std::fmt;
 
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("cycle detected involving task \"{0}\"")]
+    #[error("cycle detected involving: \"{0}\"")]
     CycleDetected(String),
 }
 
-/// A directed acyclic graph representing task dependencies.
+/// A directed acyclic graph over nodes of type `T`.
 ///
-/// The graph encodes dependencies as two adjacency lists (forward and
-/// reverse) plus a node set. It provides query methods for traversal
-/// ([`roots`](Self::roots), [`leaves`](Self::leaves),
-/// [`dependencies_of`](Self::dependencies_of),
-/// [`dependents_of`](Self::dependents_of)) and a topological sort
-/// ([`execution_order`](Self::execution_order)) that doubles as cycle
-/// detection.
+/// Node values are interned into a contiguous `Vec<T>` and all internal
+/// operations use `usize` indices. This avoids per-edge cloning and
+/// replaces map lookups in hot paths with direct indexing.
 ///
-/// # Graph Structure
+/// The struct itself imposes **no trait bounds** on `T`. Bounds appear
+/// only on the `impl` blocks that need them — for example, `Display` is
+/// required only by the cycle-detection error path.
 ///
-/// Node names are interned into a contiguous `Vec<String>` and all
-/// internal operations use `usize` indices. This avoids per-edge string
-/// cloning and replaces hash-map lookups in hot paths with direct
-/// indexing.
-///
-/// - `names[i]`: the human-readable name of node `i`
+/// - `nodes[i]`: the value of node `i`
 /// - `dependencies[i]`: indices of nodes that node `i` depends on
 /// - `dependents[i]`: indices of nodes that depend on node `i`
 #[derive(Debug)]
-pub struct DirectedAcyclicGraph {
-    /// index -> node name
-    names: Vec<String>,
-    /// node name -> index (reverse lookup for public `&str`-based API)
-    index_of: HashMap<String, usize>,
+pub struct DirectedAcyclicGraph<T> {
+    /// index -> node value
+    nodes: Vec<T>,
     /// node index -> indices of its upstream dependencies
     dependencies: Vec<Vec<usize>>,
     /// node index -> indices of its downstream dependents
     dependents: Vec<Vec<usize>>,
 }
 
-impl DirectedAcyclicGraph {
-    /// Creates a new graph from a list of node names and directed edges.
+// Core methods — no bounds on T.
+impl<T> DirectedAcyclicGraph<T> {
+    /// Creates a new graph from a list of node values and directed edges.
     ///
     /// Each edge is a `(dependency, dependent)` pair of indices into
-    /// `names`. The caller is responsible for ensuring all indices are
+    /// `nodes`. The caller is responsible for ensuring all indices are
     /// within bounds.
-    pub fn new(names: Vec<String>, edges: Vec<(usize, usize)>) -> Self {
-        let n = names.len();
-        let index_of: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| (name.clone(), i))
-            .collect();
-
+    pub fn new(nodes: Vec<T>, edges: Vec<(usize, usize)>) -> Self {
+        let n = nodes.len();
         let mut dependencies = vec![Vec::new(); n];
         let mut dependents = vec![Vec::new(); n];
 
@@ -75,106 +62,86 @@ impl DirectedAcyclicGraph {
         }
 
         Self {
-            names,
-            index_of,
+            nodes,
             dependencies,
             dependents,
         }
     }
 
-    /// Returns nodes with no dependencies (entry points of the graph).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// let roots = graph.roots();
-    /// // For a graph with edges [a, b] -> [c]:
-    /// // roots == ["a", "b"]
-    /// ```
-    pub fn roots(&self) -> Vec<&str> {
-        (0..self.names.len())
+    /// Returns references to nodes with no dependencies (entry points).
+    pub fn roots(&self) -> Vec<&T> {
+        (0..self.nodes.len())
             .filter(|&i| self.dependencies[i].is_empty())
-            .map(|i| self.names[i].as_str())
+            .map(|i| &self.nodes[i])
             .collect()
     }
 
-    /// Returns nodes with no dependents (terminal nodes of the graph).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// let leaves = graph.leaves();
-    /// // For a graph [a, b] -> [c] -> [d]:
-    /// // leaves == ["d"]
-    /// ```
-    pub fn leaves(&self) -> Vec<&str> {
-        (0..self.names.len())
+    /// Returns references to nodes with no dependents (terminal nodes).
+    pub fn leaves(&self) -> Vec<&T> {
+        (0..self.nodes.len())
             .filter(|&i| self.dependents[i].is_empty())
-            .map(|i| self.names[i].as_str())
+            .map(|i| &self.nodes[i])
             .collect()
     }
 
-    /// Returns the names of the direct upstream dependencies of a node.
-    ///
-    /// An empty vec means the node has no dependencies (it is a root).
-    /// Returns an empty vec if the node name is not in the graph.
-    pub fn dependencies_of(&self, task: &str) -> Vec<&str> {
-        self.index_of
-            .get(task)
-            .map(|&i| {
-                self.dependencies[i]
-                    .iter()
-                    .map(|&j| self.names[j].as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Returns the names of the direct downstream dependents of a node.
-    ///
-    /// An empty vec means nothing depends on this node (it is a leaf).
-    /// Returns an empty vec if the node name is not in the graph.
-    pub fn dependents_of(&self, task: &str) -> Vec<&str> {
-        self.index_of
-            .get(task)
-            .map(|&i| {
-                self.dependents[i]
-                    .iter()
-                    .map(|&j| self.names[j].as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Returns the total number of nodes in the graph.
-    pub fn len(&self) -> usize {
-        self.names.len()
-    }
-
-    /// Returns `true` if the graph contains no nodes.
-    pub fn is_empty(&self) -> bool {
-        self.names.is_empty()
-    }
-
-    /// Returns the index of a node by name, or `None` if not in the graph.
-    pub fn index_of(&self, name: &str) -> Option<usize> {
-        self.index_of.get(name).copied()
-    }
-
-    /// Returns the name of the node at `index`.
+    /// Returns references to the direct upstream dependencies of the node
+    /// at `index`.
     ///
     /// # Panics
     ///
     /// Panics if `index >= self.len()`.
-    pub fn name_of(&self, index: usize) -> &str {
-        &self.names[index]
+    pub fn dependencies_of(&self, index: usize) -> Vec<&T> {
+        self.dependencies[index]
+            .iter()
+            .map(|&j| &self.nodes[j])
+            .collect()
     }
 
-    /// Consumes the graph and returns the interned node name table.
-    pub fn into_names(self) -> Vec<String> {
-        self.names
+    /// Returns references to the direct downstream dependents of the node
+    /// at `index`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    pub fn dependents_of(&self, index: usize) -> Vec<&T> {
+        self.dependents[index]
+            .iter()
+            .map(|&j| &self.nodes[j])
+            .collect()
     }
 
+    /// Returns the total number of nodes in the graph.
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Returns `true` if the graph contains no nodes.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Returns a reference to the node value at `index`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    pub fn node(&self, index: usize) -> &T {
+        &self.nodes[index]
+    }
+
+    /// Returns a shared reference to the full node slice.
+    pub fn nodes(&self) -> &[T] {
+        &self.nodes
+    }
+
+    /// Consumes the graph and returns the node value table.
+    pub fn into_nodes(self) -> Vec<T> {
+        self.nodes
+    }
+}
+
+// Topological sort — requires Display for error formatting.
+impl<T: fmt::Display> DirectedAcyclicGraph<T> {
     /// Returns node indices in a valid execution order using
     /// [Kahn's algorithm](https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm).
     ///
@@ -191,7 +158,7 @@ impl DirectedAcyclicGraph {
     /// Returns [`Error::CycleDetected`] listing the nodes involved in the
     /// cycle if a valid topological ordering cannot be produced.
     pub fn execution_order_indices(&self) -> Result<Vec<usize>, Error> {
-        let n = self.names.len();
+        let n = self.nodes.len();
         let mut in_degree: Vec<usize> = self.dependencies.iter().map(|d| d.len()).collect();
 
         let mut queue: VecDeque<usize> = in_degree
@@ -214,22 +181,25 @@ impl DirectedAcyclicGraph {
 
         if order.len() != n {
             let visited: HashSet<usize> = order.iter().copied().collect();
-            let remaining: Vec<&str> = (0..n)
+            let remaining: Vec<String> = (0..n)
                 .filter(|i| !visited.contains(i))
-                .map(|i| self.names[i].as_str())
+                .map(|i| self.nodes[i].to_string())
                 .collect();
             return Err(Error::CycleDetected(remaining.join(", ")));
         }
 
         Ok(order)
     }
+}
 
-    /// Returns node names in a valid execution order.
+// Convenience method — requires Clone + Display.
+impl<T: Clone + fmt::Display> DirectedAcyclicGraph<T> {
+    /// Returns node values in a valid execution order.
     ///
     /// Convenience wrapper around [`execution_order_indices`](Self::execution_order_indices)
-    /// that maps indices back to owned name strings.
-    pub fn execution_order(&self) -> Result<Vec<String>, Error> {
+    /// that maps indices back to cloned node values.
+    pub fn execution_order(&self) -> Result<Vec<T>, Error> {
         self.execution_order_indices()
-            .map(|indices| indices.into_iter().map(|i| self.names[i].clone()).collect())
+            .map(|indices| indices.into_iter().map(|i| self.nodes[i].clone()).collect())
     }
 }

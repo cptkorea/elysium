@@ -33,6 +33,7 @@
 //! scheduler.run().await; // blocks forever, ticking every second
 //! ```
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::schema::ScheduledWorkflow;
@@ -112,10 +113,17 @@ impl Pyra {
             let dag = workflow.to_dag()?;
             let order = dag.execution_order_indices()?;
 
+            let index_of: HashMap<&str, usize> = dag
+                .nodes()
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.as_str(), i))
+                .collect();
+
             let mut tasks: Vec<Option<TaskState>> = (0..dag.len()).map(|_| None).collect();
             for stage in &workflow.stages {
                 for (name, def) in &stage.tasks {
-                    let idx = dag.index_of(name).expect("task must exist in DAG");
+                    let idx = index_of[name.as_str()];
                     tasks[idx] = Some(TaskState {
                         interval: Duration::from_secs(def.interval_secs),
                         last_run: None,
@@ -125,7 +133,7 @@ impl Pyra {
 
             resolved.push(ResolvedWorkflow {
                 name: workflow.name.clone(),
-                task_names: dag.into_names(),
+                task_names: dag.into_nodes(),
                 execution_order: order,
                 tasks: tasks.into_iter().map(|t| t.expect("all DAG nodes must have a task definition")).collect(),
             });
