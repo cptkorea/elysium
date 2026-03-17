@@ -3,8 +3,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use pneuma::schema::ScheduledWorkflow;
     use pneuma::scheduler::Pyra;
+    use pneuma::schema::ScheduledWorkflow;
 
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -37,7 +37,7 @@ mod tests {
     #[tokio::test]
     async fn scheduler_runs_without_panic() {
         let workflow = ScheduledWorkflow::from_yaml(&fixture("etl.yaml")).unwrap();
-        let mut scheduler = Pyra::new(vec![workflow]).unwrap();
+        let scheduler = Pyra::new(vec![workflow]).unwrap();
 
         let handle = tokio::spawn(async move {
             scheduler.run().await;

@@ -348,7 +348,7 @@ impl Pyra {
                     value: logos::Value::from(data),
                 };
                 if let Err(e) = raft.client_write(cmd).await {
-                    eprintln!("[pneuma] failed to persist workflow def: {e}");
+                    eprintln!("[pneuma] failed to persist workflow definition: {e}");
                 }
             }
 

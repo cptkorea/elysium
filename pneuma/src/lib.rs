@@ -12,5 +12,5 @@ pub enum Error {
     #[error("unknown task \"{0}\" referenced in depends_on")]
     UnknownTask(String),
     #[error(transparent)]
-    Dag(#[from] elysium_common::dag::Error),
+    GraphError(#[from] elysium_common::dag::Error),
 }
