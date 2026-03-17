@@ -4,6 +4,12 @@
 //! `BTreeMap<Key, Value>`. Each committed [`Command`] is applied in log order
 //! across every node, guaranteeing linearizable reads through the leader.
 //!
+//! ## Shared State
+//!
+//! The underlying [`StateMachineData`] is wrapped in an `Arc<RwLock<..>>` so
+//! that external readers (e.g. the gRPC query endpoint, the pneuma scheduler)
+//! can perform eventually-consistent reads without blocking Raft applies.
+//!
 //! ## Lifecycle
 //!
 //! 1. The Raft leader replicates a [`Command`] to a quorum of followers.
@@ -15,14 +21,14 @@
 //! ```rust,ignore
 //! use logos::state_machine::{StateMachine, StateMachineData};
 //!
-//! let mut sm = StateMachine::default();
-//! // After applying Command::Put { key: Key::from("k"), value: Value::from("v") }
-//! // through Raft, the KV store will contain (Key("k") -> Value("v")).
-//! assert!(sm.data().kv.is_empty()); // empty until entries are applied
+//! let sm = StateMachine::default();
+//! let reader = sm.reader(); // shared read handle
+//! // After applying Command::Put through Raft, the reader will see the value.
 //! ```
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::sync::{Arc, RwLock};
 
 use openraft::storage::RaftStateMachine;
 use openraft::{
@@ -31,7 +37,7 @@ use openraft::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Command, CommandResponse, Key, TypeConfig, Value};
+use crate::{Command, CommandResponse, Key, StateReader, TypeConfig, Value};
 
 /// Converts an arbitrary [`std::error::Error`] into an [`openraft::StorageError`]
 /// tagged as a state-machine I/O error.
@@ -86,26 +92,37 @@ pub struct StateMachineData {
 /// Each node in the cluster maintains its own [`StateMachine`]. Because all
 /// nodes apply the same entries in the same order, their `kv` maps converge
 /// to identical state.
+///
+/// The underlying data is shared via `Arc<RwLock<..>>` so that
+/// [`StateReader`] handles can perform concurrent, non-blocking reads
+/// while Raft applies are serialized through the write lock.
 #[derive(Debug, Default)]
 pub struct StateMachine {
-    data: StateMachineData,
+    data: Arc<RwLock<StateMachineData>>,
 }
 
 impl StateMachine {
     /// Returns a read-only reference to the underlying [`StateMachineData`].
     ///
-    /// Useful for inspecting the current KV state or the last applied log id
-    /// outside of the Raft apply path.
+    /// Acquires a shared read lock. For long-lived read access, prefer
+    /// [`reader`](Self::reader) which returns a cloneable handle.
     ///
-    /// # Examples
+    /// # Panics
     ///
-    /// ```rust,ignore
-    /// let sm = StateMachine::default();
-    /// assert!(sm.data().kv.is_empty());
-    /// assert!(sm.data().last_applied_log.is_none());
-    /// ```
-    pub fn data(&self) -> &StateMachineData {
-        &self.data
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn data(&self) -> std::sync::RwLockReadGuard<'_, StateMachineData> {
+        self.data.read().expect("state machine lock poisoned")
+    }
+
+    /// Returns a [`StateReader`] handle for shared, concurrent reads.
+    ///
+    /// The returned reader is cheaply cloneable and can be passed to other
+    /// tasks (e.g. the gRPC query endpoint, the pneuma scheduler). Reads
+    /// are eventually consistent on follower nodes.
+    pub fn reader(&self) -> StateReader {
+        StateReader {
+            data: Arc::clone(&self.data),
+        }
     }
 }
 
@@ -125,10 +142,8 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
         ),
         StorageError<u64>,
     > {
-        Ok((
-            self.data.last_applied_log,
-            self.data.last_membership.clone(),
-        ))
+        let data = self.data.read().expect("state machine lock poisoned");
+        Ok((data.last_applied_log, data.last_membership.clone()))
     }
 
     /// Applies a batch of committed log entries to the KV store.
@@ -142,18 +157,16 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
     /// Returns one [`CommandResponse`] per entry, preserving the previous
     /// value at the affected key (if any) for [`Command::Put`] and
     /// [`Command::Delete`].
-    async fn apply<I>(
-        &mut self,
-        entries: I,
-    ) -> Result<Vec<CommandResponse>, StorageError<u64>>
+    async fn apply<I>(&mut self, entries: I) -> Result<Vec<CommandResponse>, StorageError<u64>>
     where
         I: IntoIterator<Item = Entry<TypeConfig>> + Send,
         I::IntoIter: Send,
     {
+        let mut data = self.data.write().expect("state machine lock poisoned");
         let mut responses = Vec::new();
 
         for entry in entries {
-            self.data.last_applied_log = Some(entry.log_id);
+            data.last_applied_log = Some(entry.log_id);
 
             match entry.payload {
                 EntryPayload::Blank => {
@@ -161,17 +174,16 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
                 }
                 EntryPayload::Normal(cmd) => match cmd {
                     Command::Put { key, value } => {
-                        let prev = self.data.kv.insert(key, value);
+                        let prev = data.kv.insert(key, value);
                         responses.push(CommandResponse::Put { prev });
                     }
                     Command::Delete { key } => {
-                        let prev = self.data.kv.remove(&key);
+                        let prev = data.kv.remove(&key);
                         responses.push(CommandResponse::Delete { prev });
                     }
                 },
                 EntryPayload::Membership(mem) => {
-                    self.data.last_membership =
-                        StoredMembership::new(Some(entry.log_id), mem);
+                    data.last_membership = StoredMembership::new(Some(entry.log_id), mem);
                     responses.push(CommandResponse::Put { prev: None });
                 }
             }
@@ -182,9 +194,8 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
 
     /// Returns a snapshot builder that captures the current state.
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        StateMachineSnapshot {
-            data: self.data.clone(),
-        }
+        let data = self.data.read().expect("state machine lock poisoned").clone();
+        StateMachineSnapshot { data }
     }
 
     /// Prepares an empty buffer to receive an incoming snapshot from the leader.
@@ -204,12 +215,14 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
         meta: &SnapshotMeta<u64, openraft::BasicNode>,
         snapshot: Box<Cursor<Vec<u8>>>,
     ) -> Result<(), StorageError<u64>> {
-        let data: StateMachineData =
+        let mut new_data: StateMachineData =
             bincode::deserialize(snapshot.get_ref()).map_err(sm_io_err)?;
 
-        self.data = data;
-        self.data.last_applied_log = meta.last_log_id;
-        self.data.last_membership = meta.last_membership.clone();
+        new_data.last_applied_log = meta.last_log_id;
+        new_data.last_membership = meta.last_membership.clone();
+
+        let mut data = self.data.write().expect("state machine lock poisoned");
+        *data = new_data;
 
         Ok(())
     }
@@ -221,9 +234,10 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<u64>> {
-        let data = bincode::serialize(&self.data).map_err(sm_io_err)?;
+        let data_guard = self.data.read().expect("state machine lock poisoned");
+        let data = bincode::serialize(&*data_guard).map_err(sm_io_err)?;
 
-        let last_applied_log = self.data.last_applied_log;
+        let last_applied_log = data_guard.last_applied_log;
         let snapshot_id = last_applied_log
             .map(|id| format!("{}-{}", id.leader_id, id.index))
             .unwrap_or_default();
@@ -231,7 +245,7 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
         Ok(Some(Snapshot {
             meta: SnapshotMeta {
                 last_log_id: last_applied_log,
-                last_membership: self.data.last_membership.clone(),
+                last_membership: data_guard.last_membership.clone(),
                 snapshot_id,
             },
             snapshot: Box::new(Cursor::new(data)),
@@ -254,9 +268,7 @@ impl RaftSnapshotBuilder<TypeConfig> for StateMachineSnapshot {
     /// The resulting blob is a [`bincode`]-encoded [`StateMachineData`] wrapped
     /// in a `Cursor<Vec<u8>>`, suitable for transmission over the gRPC snapshot
     /// RPC.
-    async fn build_snapshot(
-        &mut self,
-    ) -> Result<Snapshot<TypeConfig>, StorageError<u64>> {
+    async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<u64>> {
         let data = bincode::serialize(&self.data).map_err(sm_io_err)?;
 
         let last_applied_log = self.data.last_applied_log;

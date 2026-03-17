@@ -223,9 +223,8 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
             .await
             .map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
 
-        let snap_resp: InstallSnapshotResponse<u64> =
-            bincode::deserialize(&resp.into_inner().data)
-                .map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
+        let snap_resp: InstallSnapshotResponse<u64> = bincode::deserialize(&resp.into_inner().data)
+            .map_err(|e| RPCError::Network(openraft::error::NetworkError::new(&e)))?;
 
         Ok(snap_resp)
     }

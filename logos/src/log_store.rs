@@ -174,11 +174,7 @@ impl RaftLogStorage<TypeConfig> for LogStore {
     /// local log—the follower must truncate its log back to the divergence
     /// point before appending the leader's entries.
     async fn truncate(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        let to_remove: Vec<u64> = self
-            .log
-            .range(log_id.index..)
-            .map(|(k, _)| *k)
-            .collect();
+        let to_remove: Vec<u64> = self.log.range(log_id.index..).map(|(k, _)| *k).collect();
         for key in to_remove {
             self.log.remove(&key);
         }
@@ -192,11 +188,7 @@ impl RaftLogStorage<TypeConfig> for LogStore {
     /// updated so that [`get_log_state`](Self::get_log_state) reports the
     /// correct lower bound.
     async fn purge(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        let to_remove: Vec<u64> = self
-            .log
-            .range(..=log_id.index)
-            .map(|(k, _)| *k)
-            .collect();
+        let to_remove: Vec<u64> = self.log.range(..=log_id.index).map(|(k, _)| *k).collect();
         for key in to_remove {
             self.log.remove(&key);
         }
@@ -214,9 +206,7 @@ impl RaftLogStorage<TypeConfig> for LogStore {
     }
 
     /// Reads the last persisted committed log id.
-    async fn read_committed(
-        &mut self,
-    ) -> Result<Option<LogId<u64>>, StorageError<u64>> {
+    async fn read_committed(&mut self) -> Result<Option<LogId<u64>>, StorageError<u64>> {
         Ok(self.committed)
     }
 }

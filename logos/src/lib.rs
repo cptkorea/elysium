@@ -27,6 +27,7 @@
 //! ```
 
 use std::io::Cursor;
+use std::sync::{Arc, RwLock};
 
 use openraft::BasicNode;
 use serde::{Deserialize, Serialize};
@@ -238,4 +239,115 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("raft error: {0}")]
     RaftError(String),
+}
+
+/// A read-only query against the local KV state machine.
+///
+/// Queries are served directly from the local replica without going through
+/// the Raft log. On follower nodes this means reads may be slightly behind
+/// the leader (eventual consistency), which we consider acceptable for
+/// observability use cases.
+///
+/// # Variants
+///
+/// - [`Get`](Query::Get): Retrieve a single key.
+/// - [`Scan`](Query::Scan): Return all key-value pairs whose key starts with
+///   a given prefix, leveraging the underlying `BTreeMap`'s lexicographic
+///   ordering.
+///
+/// # Examples
+///
+/// ```
+/// use logos::{Key, Query};
+///
+/// let get = Query::Get { key: Key::from("scheduler/etl/last_run") };
+/// let scan = Query::Scan { prefix: Key::from("scheduler/etl/") };
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Query {
+    /// Look up a single key in the store.
+    Get { key: Key },
+    /// Return all entries whose key starts with `prefix`.
+    Scan { prefix: Key },
+}
+
+/// The response to a [`Query`] against the local KV state machine.
+///
+/// # Examples
+///
+/// ```
+/// use logos::{QueryResponse, Value};
+///
+/// let resp = QueryResponse::Get { value: Some(Value::from("hello")) };
+/// assert!(matches!(resp, QueryResponse::Get { value: Some(_) }));
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum QueryResponse {
+    /// The value at the requested key, or `None` if absent.
+    Get { value: Option<Value> },
+    /// All key-value pairs matching the scan prefix.
+    Scan { entries: Vec<(Key, Value)> },
+}
+
+/// A read-only handle to the replicated KV state machine.
+///
+/// Provides shared-access queries against the local state machine data.
+/// On follower nodes, reads are eventually consistent — the follower
+/// may lag behind the leader by a small number of committed entries.
+///
+/// Since `StateReader` is `Arc`-backed, it is cheap to clone and safe to share
+/// across tasks and threads.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let sm = StateMachine::default();
+/// let reader = sm.reader();
+///
+/// // Read a single key.
+/// let val = reader.get(&Key::from("foo"));
+///
+/// // Prefix scan.
+/// let entries = reader.scan_prefix(&Key::from("scheduler/"));
+/// ```
+#[derive(Debug, Clone)]
+pub struct StateReader {
+    data: Arc<RwLock<state_machine::StateMachineData>>,
+}
+
+impl StateReader {
+    /// Retrieves the value for a single key, or `None` if absent.
+    pub fn get(&self, key: &Key) -> Option<Value> {
+        self.data
+            .read()
+            .expect("state machine lock poisoned")
+            .kv
+            .get(key)
+            .cloned()
+    }
+
+    /// Returns all key-value pairs whose key starts with `prefix`.
+    ///
+    /// Leverages the `BTreeMap`'s sorted order for efficient prefix
+    /// range scans without a full table scan.
+    pub fn scan_prefix(&self, prefix: &Key) -> Vec<(Key, Value)> {
+        let data = self.data.read().expect("state machine lock poisoned");
+        data.kv
+            .range(prefix.clone()..)
+            .take_while(|(k, _)| k.as_bytes().starts_with(prefix.as_bytes()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Dispatches a [`Query`] and returns the corresponding [`QueryResponse`].
+    pub fn query(&self, q: &Query) -> QueryResponse {
+        match q {
+            Query::Get { key } => QueryResponse::Get {
+                value: self.get(key),
+            },
+            Query::Scan { prefix } => QueryResponse::Scan {
+                entries: self.scan_prefix(prefix),
+            },
+        }
+    }
 }

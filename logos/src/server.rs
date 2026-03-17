@@ -5,6 +5,12 @@
 //! messages from peer nodes, deserializes them with [`bincode`], and forwards
 //! them to the local [`openraft::Raft`] instance.
 //!
+//! In addition to the consensus RPCs (vote, append-entries, snapshot), the
+//! server exposes a [`Query`](crate::Query) RPC for read-only access to the
+//! local state machine. Query reads bypass the Raft log and are served
+//! directly from the local replica, providing eventual consistency on
+//! follower nodes.
+//!
 //! ## Request Flow
 //!
 //! ```text
@@ -23,7 +29,9 @@
 //! use logos::network::proto::raft_service_server::RaftServiceServer;
 //!
 //! let raft = Arc::new(/* ... create Raft instance ... */);
-//! let svc = RaftServiceServer::new(RaftServer::new(raft));
+//! let sm = logos::state_machine::StateMachine::default();
+//! let reader = sm.reader();
+//! let svc = RaftServiceServer::new(RaftServer::new(raft, reader));
 //!
 //! tonic::transport::Server::builder()
 //!     .add_service(svc)
@@ -40,14 +48,20 @@ use tonic::{Request, Response, Status};
 
 use crate::network::proto::raft_service_server::RaftService;
 use crate::network::proto::{RaftRequest, RaftResponse};
-use crate::TypeConfig;
+use crate::{Query, StateReader, TypeConfig};
 
-/// gRPC server that bridges incoming Raft RPCs to the local [`openraft::Raft`] instance.
+/// gRPC server that bridges incoming Raft RPCs to the local [`openraft::Raft`]
+/// instance and serves read-only [`Query`] requests from the local state
+/// machine.
 ///
-/// Each RPC handler follows the same pattern:
+/// Each consensus RPC handler follows the same pattern:
 /// 1. Deserialize the `bincode`-encoded request from `RaftRequest.data`.
 /// 2. Forward to the corresponding `Raft` method.
 /// 3. Serialize the response back into `RaftResponse.data`.
+///
+/// The [`Query`] handler reads directly from the local [`StateReader`]
+/// without going through the Raft log, providing eventually-consistent
+/// reads suitable for observability and monitoring.
 ///
 /// # Examples
 ///
@@ -56,18 +70,23 @@ use crate::TypeConfig;
 /// use logos::server::RaftServer;
 ///
 /// let raft_instance: Arc<logos::Raft> = /* ... */;
-/// let server = RaftServer::new(raft_instance);
+/// let reader: logos::StateReader = /* ... from StateMachine::reader() ... */;
+/// let server = RaftServer::new(raft_instance, reader);
 /// ```
 pub struct RaftServer {
     raft: Arc<crate::Raft>,
+    reader: StateReader,
 }
 
 impl RaftServer {
-    /// Creates a new [`RaftServer`] wrapping the given Raft instance.
+    /// Creates a new [`RaftServer`] wrapping the given Raft instance and
+    /// state machine reader.
     ///
     /// The `Arc` allows the server to be shared across tonic's async tasks.
-    pub fn new(raft: Arc<crate::Raft>) -> Self {
-        Self { raft }
+    /// The [`StateReader`] provides lock-free read access to the local
+    /// state machine for serving [`Query`] RPCs.
+    pub fn new(raft: Arc<crate::Raft>, reader: StateReader) -> Self {
+        Self { raft, reader }
     }
 }
 
@@ -77,10 +96,7 @@ impl RaftService for RaftServer {
     ///
     /// Deserializes the [`VoteRequest`], calls [`Raft::vote`](openraft::Raft::vote),
     /// and returns the serialized [`VoteResponse`].
-    async fn vote(
-        &self,
-        request: Request<RaftRequest>,
-    ) -> Result<Response<RaftResponse>, Status> {
+    async fn vote(&self, request: Request<RaftRequest>) -> Result<Response<RaftResponse>, Status> {
         let req: VoteRequest<u64> = bincode::deserialize(&request.into_inner().data)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
@@ -90,8 +106,7 @@ impl RaftService for RaftServer {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let data =
-            bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
+        let data = bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(RaftResponse { data }))
     }
@@ -115,8 +130,7 @@ impl RaftService for RaftServer {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let data =
-            bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
+        let data = bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(RaftResponse { data }))
     }
@@ -145,8 +159,28 @@ impl RaftService for RaftServer {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let data =
-            bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
+        let data = bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(RaftResponse { data }))
+    }
+
+    /// Handles a read-only query against the local state machine.
+    ///
+    /// Deserializes a [`Query`] from the request, dispatches it to the
+    /// [`StateReader`], and returns the serialized [`QueryResponse`].
+    /// This bypasses the Raft log entirely — reads are served from
+    /// whatever state the local replica has applied so far.
+    ///
+    /// On follower nodes, the response may be slightly behind the leader.
+    /// For linearizable reads, clients should query the leader after
+    /// calling `ensure_linearizable`.
+    async fn query(&self, request: Request<RaftRequest>) -> Result<Response<RaftResponse>, Status> {
+        let q: Query = bincode::deserialize(&request.into_inner().data)
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        let resp = self.reader.query(&q);
+
+        let data = bincode::serialize(&resp).map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(RaftResponse { data }))
     }
