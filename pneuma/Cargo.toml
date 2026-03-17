@@ -1,0 +1,15 @@
+[package]
+name = "pneuma"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arc-swap = "1"
+bincode = "1"
+elysium-common = { path = "../elysium-common" }
+logos = { path = "../logos" }
+ontos = { path = "../ontos" }
+serde = { version = "1.0", features = ["derive"] }
+serde_yml = "0.0.12"
+thiserror = "1.0.49"
+tokio = { version = "1.32", features = ["rt", "rt-multi-thread", "macros", "time", "sync", "net"] }

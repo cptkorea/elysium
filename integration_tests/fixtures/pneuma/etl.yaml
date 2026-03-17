@@ -1,0 +1,18 @@
+name: etl
+stages:
+  - name: extract
+    tasks:
+      ingest_users:
+        interval_secs: 1
+      ingest_orders:
+        interval_secs: 1
+
+  - name: transform
+    tasks:
+      normalize:
+        interval_secs: 1
+
+  - name: load
+    tasks:
+      write_to_db:
+        interval_secs: 1

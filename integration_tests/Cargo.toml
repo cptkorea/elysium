@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 ontos = { path = "../ontos" }
 elysium-common = { path = "../elysium-common" }
+pneuma = { path = "../pneuma" }
 tokio = { version = "1.32", features = ["rt", "rt-multi-thread", "macros"] }
