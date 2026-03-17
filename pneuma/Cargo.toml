@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+arc-swap = "1"
+bincode = "1"
 elysium-common = { path = "../elysium-common" }
 logos = { path = "../logos" }
 ontos = { path = "../ontos" }

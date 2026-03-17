@@ -8,7 +8,7 @@ use crate::Error;
 
 /// Top-level definition for a scheduled workflow, deserialized from a single YAML file.
 /// Workflows contain an ordered list of stages that define the execution DAG.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ScheduledWorkflow {
     pub name: String,
     pub stages: Vec<WorkflowStage>,
@@ -17,14 +17,14 @@ pub struct ScheduledWorkflow {
 /// A named group of tasks within a workflow. Stages execute sequentially:
 /// all tasks in stage N must complete before any task in stage N+1 begins.
 /// Tasks within the same stage run independently unless constrained by `depends_on`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowStage {
     pub name: String,
     pub tasks: BTreeMap<String, WorkflowTask>,
 }
 
 /// A single schedulable unit of work within a stage.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowTask {
     /// How often this task should fire, in seconds.
     pub interval_secs: u64,
@@ -77,11 +77,8 @@ impl ScheduledWorkflow {
         let mut prev_stage_indices: Vec<usize> = Vec::new();
 
         for stage in &self.stages {
-            let current_stage_indices: Vec<usize> = stage
-                .tasks
-                .keys()
-                .map(|name| index_of[name])
-                .collect();
+            let current_stage_indices: Vec<usize> =
+                stage.tasks.keys().map(|name| index_of[name]).collect();
 
             for &task_idx in &current_stage_indices {
                 for &prev_idx in &prev_stage_indices {
@@ -91,9 +88,9 @@ impl ScheduledWorkflow {
                 let task_name = &names[task_idx];
                 if let Some(task_def) = stage.tasks.get(task_name) {
                     for dep_name in &task_def.depends_on {
-                        let dep_idx = index_of.get(dep_name.as_str()).ok_or_else(|| {
-                            Error::UnknownTask(dep_name.clone())
-                        })?;
+                        let dep_idx = index_of
+                            .get(dep_name.as_str())
+                            .ok_or_else(|| Error::UnknownTask(dep_name.clone()))?;
                         edges.push((*dep_idx, task_idx));
                     }
                 }
