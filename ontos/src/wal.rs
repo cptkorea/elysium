@@ -36,7 +36,9 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
+use elysium_common::backoff;
 use serde::{Deserialize, Serialize};
 
 use crate::{DurabilityMode, Error};
@@ -55,6 +57,15 @@ pub enum WalRecord {
     Delete { key: Vec<u8> },
 }
 
+/// Number of consecutive `sync_data()` failures before the background
+/// flusher marks itself as degraded and the write path falls back to
+/// synchronous fsync.
+const FLUSHER_FAILURE_THRESHOLD: u32 = 3;
+
+/// Upper bound on the sleep duration when the flusher is in exponential
+/// backoff after repeated `sync_data()` failures.
+const FLUSHER_MAX_BACKOFF: Duration = Duration::from_secs(5);
+
 /// State for the background flusher thread used in [`DurabilityMode::Async`].
 struct AsyncFlusher {
     /// Shared file handle that the flusher thread calls `sync_data()` on.
@@ -62,6 +73,10 @@ struct AsyncFlusher {
     shared_file: Arc<Mutex<File>>,
     /// Set to `true` to signal the background thread to exit.
     shutdown: Arc<AtomicBool>,
+    /// Set to `true` when the flusher has hit [`FLUSHER_FAILURE_THRESHOLD`]
+    /// consecutive `sync_data()` failures. The write path checks this to
+    /// fall back to synchronous fsync.
+    degraded: Arc<AtomicBool>,
     /// Handle to the background thread, joined on drop.
     handle: Option<JoinHandle<()>>,
 }
@@ -82,6 +97,11 @@ struct AsyncFlusher {
 /// [`open`](Self::open). In [`Async`](DurabilityMode::Async) mode, a
 /// background thread periodically fsyncs; it is shut down automatically
 /// when the `WriteAheadLog` is dropped.
+///
+/// If the background flusher encounters [`FLUSHER_FAILURE_THRESHOLD`]
+/// consecutive `sync_data()` failures, the WAL enters a **degraded**
+/// state where `append()` falls back to synchronous fsync on every
+/// write. Use [`is_degraded`](Self::is_degraded) to query this state.
 pub struct WriteAheadLog {
     file: File,
     path: PathBuf,
@@ -123,16 +143,25 @@ impl WriteAheadLog {
     /// followed by the bincode payload.
     ///
     /// In [`Sync`](DurabilityMode::Sync) mode, `sync_data()` is called
-    /// before returning. In [`Async`](DurabilityMode::Async) and
-    /// [`Volatile`](DurabilityMode::Volatile) modes, the write goes to
-    /// the OS buffer without an immediate fsync.
+    /// before returning. In [`Async`](DurabilityMode::Async) mode, the
+    /// write normally goes to the OS buffer without an immediate fsync —
+    /// but if the background flusher has [degraded](Self::is_degraded) state,
+    /// the write falls back to a synchronous fsync to maintain durability.
+    /// In [`Volatile`](DurabilityMode::Volatile) mode, no fsync is ever
+    /// performed.
     pub fn append(&mut self, record: &WalRecord) -> Result<(), Error> {
         let payload = bincode::serialize(record).map_err(|_| Error::BincodeError)?;
         let len = (payload.len() as u32).to_le_bytes();
         self.file.write_all(&len)?;
         self.file.write_all(&payload)?;
 
-        if matches!(self.durability, DurabilityMode::Sync) {
+        let needs_sync = match &self.durability {
+            DurabilityMode::Sync => true,
+            DurabilityMode::Async(_) => self.is_degraded(),
+            DurabilityMode::Volatile => false,
+        };
+
+        if needs_sync {
             self.file.sync_data()?;
         }
 
@@ -193,6 +222,21 @@ impl WriteAheadLog {
         Ok(records)
     }
 
+    /// Returns `true` if the background flusher has entered a degraded
+    /// state after [`FLUSHER_FAILURE_THRESHOLD`] consecutive `sync_data()`
+    /// failures.
+    ///
+    /// When degraded, [`append`](Self::append) falls back to synchronous
+    /// fsync on every write so durability is not silently lost.
+    ///
+    /// Always returns `false` for [`Sync`](DurabilityMode::Sync) and
+    /// [`Volatile`](DurabilityMode::Volatile) modes (no background flusher).
+    pub fn is_degraded(&self) -> bool {
+        self.flusher
+            .as_ref()
+            .map_or(false, |f| f.degraded.load(Ordering::Relaxed))
+    }
+
     /// Rotates the WAL by truncating the current file to zero length.
     ///
     /// Called after the MemTable has been successfully flushed to an
@@ -238,6 +282,11 @@ impl Drop for WriteAheadLog {
 /// The thread holds a cloned file descriptor and calls `sync_data()`
 /// at the given interval. It checks the shutdown flag each iteration
 /// and exits when signaled.
+///
+/// If `sync_data()` fails [`FLUSHER_FAILURE_THRESHOLD`] times in a row,
+/// the `degraded` flag is set so the write path can fall back to
+/// synchronous fsync. A subsequent successful `sync_data()` resets both
+/// the counter and the flag.
 fn spawn_flusher(file: &File, interval: std::time::Duration) -> Result<AsyncFlusher, Error> {
     // std::fs::File is not clone, use try_clone which under the hood uses the dup or dup2
     // syscall creating a new file descriptor that points to the same kernel file object
@@ -245,27 +294,58 @@ fn spawn_flusher(file: &File, interval: std::time::Duration) -> Result<AsyncFlus
     let cloned = file.try_clone()?;
     let shared_file = Arc::new(Mutex::new(cloned));
     let shutdown = Arc::new(AtomicBool::new(false));
+    let degraded = Arc::new(AtomicBool::new(false));
 
     let thread_file = Arc::clone(&shared_file);
     let thread_shutdown = Arc::clone(&shutdown);
+    let thread_degraded = Arc::clone(&degraded);
 
     let handle = thread::spawn(move || {
+        let mut consecutive_failures: u32 = 0;
+
         while !thread_shutdown.load(Ordering::Relaxed) {
-            thread::sleep(interval);
+            let sleep_duration = if consecutive_failures >= FLUSHER_FAILURE_THRESHOLD {
+                backoff::exponential(
+                    interval,
+                    consecutive_failures - FLUSHER_FAILURE_THRESHOLD,
+                    FLUSHER_MAX_BACKOFF,
+                )
+            } else {
+                interval
+            };
+
+            thread::sleep(sleep_duration);
             if thread_shutdown.load(Ordering::Relaxed) {
                 break;
             }
 
-            let _ = thread_file
-                .lock()
-                .expect("[spawn_flusher] shared file lock has been poisoned")
-                .sync_data();
+            let f = thread_file.lock().expect("flusher file lock poisoned");
+
+            match f.sync_data() {
+                Ok(()) => {
+                    if consecutive_failures > 0 {
+                        consecutive_failures = 0;
+                        thread_degraded.store(false, Ordering::Relaxed);
+                    }
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    eprintln!(
+                        "WAL flusher: sync_data failed ({consecutive_failures}/\
+                         {FLUSHER_FAILURE_THRESHOLD}): {e}"
+                    );
+                    if consecutive_failures >= FLUSHER_FAILURE_THRESHOLD {
+                        thread_degraded.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
         }
     });
 
     Ok(AsyncFlusher {
         shared_file,
         shutdown,
+        degraded,
         handle: Some(handle),
     })
 }
@@ -627,6 +707,71 @@ mod tests {
                 key: b"after".to_vec(),
                 value: b"2".to_vec()
             }
+        );
+    }
+
+    #[test]
+    fn is_degraded_false_when_healthy() {
+        use std::time::Duration;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wal.log");
+
+        let mut wal =
+            WriteAheadLog::open(&path, DurabilityMode::Async(Duration::from_millis(50))).unwrap();
+
+        wal.append(&WalRecord::Put {
+            key: b"k".to_vec(),
+            value: b"v".to_vec(),
+        })
+        .unwrap();
+
+        assert!(!wal.is_degraded());
+    }
+
+    #[test]
+    fn is_degraded_false_for_sync_mode() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wal.log");
+
+        let wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
+        assert!(!wal.is_degraded());
+    }
+
+    #[test]
+    fn is_degraded_false_for_volatile_mode() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wal.log");
+
+        let wal = WriteAheadLog::open(&path, DurabilityMode::Volatile).unwrap();
+        assert!(!wal.is_degraded());
+    }
+
+    #[test]
+    fn async_mode_shutdown_under_load() {
+        use std::time::{Duration, Instant};
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wal.log");
+
+        let mut wal =
+            WriteAheadLog::open(&path, DurabilityMode::Async(Duration::from_millis(1))).unwrap();
+
+        for i in 0..100 {
+            wal.append(&WalRecord::Put {
+                key: format!("key-{i}").into_bytes(),
+                value: b"val".to_vec(),
+            })
+            .unwrap();
+        }
+
+        let start = Instant::now();
+        drop(wal);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "shutdown took too long: {elapsed:?}"
         );
     }
 }
