@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::db::{MemTable, SSTable, SortedStore};
 use crate::wal::{Wal, WalRecord};
-use crate::Error;
+use crate::{DurabilityMode, Error};
 
 /// Top-level LSM-tree engine that coordinates writes through a [`MemTable`],
 /// persists mutations via a [`Wal`], and flushes full MemTables to
@@ -13,7 +13,8 @@ use crate::Error;
 ///
 /// ## Write Path
 ///
-/// 1. The mutation is appended to the WAL (fsynced for durability).
+/// 1. The mutation is appended to the WAL (fsync behavior depends on the
+///    configured [`DurabilityMode`]).
 /// 2. The mutation is applied to the in-memory MemTable.
 /// 3. When the MemTable reaches capacity, it is flushed to a `.sst` file
 ///    and the WAL is rotated (truncated).
@@ -49,10 +50,12 @@ pub struct Driver<S: SortedStore<Vec<u8>, Option<Vec<u8>>> = BTreeMap<Vec<u8>, O
     /// Paths to SSTable files, ordered from oldest (index 0) to newest.
     sst_paths: Vec<PathBuf>,
     offset: usize,
+    durability: DurabilityMode,
 }
 
 impl Driver<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
-    /// Opens or creates a `Driver` rooted at `data_dir`.
+    /// Opens or creates a `Driver` rooted at `data_dir` with the given
+    /// [`DurabilityMode`].
     ///
     /// If the directory already exists and contains a WAL file, the WAL
     /// is replayed to reconstruct the MemTable. Existing `.sst` files
@@ -60,7 +63,10 @@ impl Driver<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
     /// off.
     ///
     /// If the directory does not exist, it is created.
-    pub fn open(data_dir: impl Into<PathBuf>) -> Result<Self, Error> {
+    pub fn open(
+        data_dir: impl Into<PathBuf>,
+        durability: DurabilityMode,
+    ) -> Result<Self, Error> {
         let data_dir = data_dir.into();
         fs::create_dir_all(&data_dir)?;
 
@@ -75,7 +81,7 @@ impl Driver<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
             }
         }
 
-        let wal = Wal::open(&wal_path)?;
+        let wal = Wal::open(&wal_path, durability.clone())?;
         let sst_paths = discover_sst_files(&data_dir);
         let offset = sst_paths.len();
 
@@ -85,12 +91,14 @@ impl Driver<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
             data_dir,
             sst_paths,
             offset,
+            durability,
         })
     }
 }
 
 impl<S: SortedStore<Vec<u8>, Option<Vec<u8>>>> Driver<S> {
-    /// Opens a `Driver` with a caller-supplied [`MemTable`] implementation.
+    /// Opens a `Driver` with a caller-supplied [`MemTable`] implementation
+    /// and the given [`DurabilityMode`].
     ///
     /// Unlike [`Driver::open`], this constructor does **not** replay the
     /// WAL into the provided MemTable — the caller is responsible for any
@@ -99,12 +107,13 @@ impl<S: SortedStore<Vec<u8>, Option<Vec<u8>>>> Driver<S> {
     pub fn open_with_memtable(
         data_dir: impl Into<PathBuf>,
         memtable: MemTable<S>,
+        durability: DurabilityMode,
     ) -> Result<Self, Error> {
         let data_dir = data_dir.into();
         fs::create_dir_all(&data_dir)?;
 
         let wal_path = data_dir.join("wal.log");
-        let wal = Wal::open(&wal_path)?;
+        let wal = Wal::open(&wal_path, durability.clone())?;
         let sst_paths = discover_sst_files(&data_dir);
         let offset = sst_paths.len();
 
@@ -114,6 +123,7 @@ impl<S: SortedStore<Vec<u8>, Option<Vec<u8>>>> Driver<S> {
             data_dir,
             sst_paths,
             offset,
+            durability,
         })
     }
 
@@ -165,7 +175,7 @@ impl<S: SortedStore<Vec<u8>, Option<Vec<u8>>>> Driver<S> {
         let sst_path = self.data_dir.join(format!("{:06}.sst", self.offset));
         self.offset += 1;
 
-        write_sst(&sst_path, &bytes)?;
+        write_sst(&sst_path, &bytes, &self.durability)?;
         self.sst_paths.push(sst_path);
         self.wal.rotate()?;
 
@@ -233,11 +243,16 @@ impl<S: SortedStore<Vec<u8>, Option<Vec<u8>>>> Driver<S> {
     }
 }
 
-/// Writes serialized SSTable bytes to a file, fsyncing for durability.
-fn write_sst(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+/// Writes serialized SSTable bytes to a file.
+///
+/// In [`Sync`](DurabilityMode::Sync) mode the file is fsynced before
+/// returning. In other modes the write is left in the OS buffer.
+fn write_sst(path: &Path, bytes: &[u8], durability: &DurabilityMode) -> Result<(), Error> {
     let mut file = File::create(path)?;
     file.write_all(bytes)?;
-    file.sync_data()?;
+    if matches!(durability, DurabilityMode::Sync) {
+        file.sync_data()?;
+    }
     Ok(())
 }
 
@@ -260,6 +275,7 @@ fn discover_sst_files(dir: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod test {
     use crate::db::Entry;
+    use crate::DurabilityMode;
     use tempfile::TempDir;
 
     use super::*;
@@ -267,7 +283,7 @@ mod test {
     #[test]
     fn put_and_flush() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
         driver.put(b"b".to_vec(), b"2".to_vec()).unwrap();
@@ -296,10 +312,11 @@ mod test {
         let dir = TempDir::new().unwrap();
         let mut driver = Driver {
             master: MemTable::with_capacity(2),
-            wal: Wal::open(dir.path().join("wal.log")).unwrap(),
+            wal: Wal::open(dir.path().join("wal.log"), DurabilityMode::Sync).unwrap(),
             data_dir: dir.path().to_path_buf(),
             sst_paths: Vec::new(),
             offset: 0,
+            durability: DurabilityMode::Sync,
         };
 
         driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
@@ -321,7 +338,7 @@ mod test {
     #[test]
     fn delete_writes_tombstone() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"key".to_vec(), b"val".to_vec()).unwrap();
         driver.delete(b"key".to_vec()).unwrap();
@@ -342,13 +359,13 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         {
-            let mut driver = Driver::open(dir.path()).unwrap();
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
             driver.put(b"x".to_vec(), b"10".to_vec()).unwrap();
             driver.put(b"y".to_vec(), b"20".to_vec()).unwrap();
             driver.delete(b"x".to_vec()).unwrap();
         }
 
-        let driver = Driver::open(dir.path()).unwrap();
+        let driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
         assert_eq!(driver.master.read(b"x".as_slice()), Some(&None));
         assert_eq!(
             driver.master.read(b"y".as_slice()),
@@ -361,12 +378,12 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         {
-            let mut driver = Driver::open(dir.path()).unwrap();
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
             driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
             driver.flush_table().unwrap();
         }
 
-        let driver = Driver::open(dir.path()).unwrap();
+        let driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
         assert!(driver.master.entries().is_empty());
     }
 
@@ -375,14 +392,14 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         {
-            let mut driver = Driver::open(dir.path()).unwrap();
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
             driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
             driver.flush_table().unwrap();
             assert!(dir.path().join("000000.sst").exists());
         }
 
         {
-            let mut driver = Driver::open(dir.path()).unwrap();
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
             driver.put(b"b".to_vec(), b"2".to_vec()).unwrap();
             driver.flush_table().unwrap();
             assert!(dir.path().join("000001.sst").exists());
@@ -392,7 +409,7 @@ mod test {
     #[test]
     fn get_from_memtable() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"key".to_vec(), b"val".to_vec()).unwrap();
         assert_eq!(driver.get(b"key").unwrap(), Some(b"val".to_vec()));
@@ -402,7 +419,7 @@ mod test {
     #[test]
     fn get_from_sstable() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
         driver.put(b"b".to_vec(), b"2".to_vec()).unwrap();
@@ -416,7 +433,7 @@ mod test {
     #[test]
     fn get_memtable_shadows_sstable() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"k".to_vec(), b"old".to_vec()).unwrap();
         driver.flush_table().unwrap();
@@ -428,7 +445,7 @@ mod test {
     #[test]
     fn get_newer_sstable_shadows_older() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"k".to_vec(), b"v1".to_vec()).unwrap();
         driver.flush_table().unwrap();
@@ -442,7 +459,7 @@ mod test {
     #[test]
     fn get_respects_tombstone() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"k".to_vec(), b"alive".to_vec()).unwrap();
         driver.flush_table().unwrap();
@@ -454,7 +471,7 @@ mod test {
     #[test]
     fn get_respects_tombstone_in_sstable() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"k".to_vec(), b"alive".to_vec()).unwrap();
         driver.flush_table().unwrap();
@@ -468,7 +485,7 @@ mod test {
     #[test]
     fn scan_merges_memtable_and_sstables() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"user/1".to_vec(), b"alice".to_vec()).unwrap();
         driver.put(b"user/2".to_vec(), b"bob".to_vec()).unwrap();
@@ -487,7 +504,7 @@ mod test {
     #[test]
     fn scan_respects_tombstones() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"user/1".to_vec(), b"alice".to_vec()).unwrap();
         driver.put(b"user/2".to_vec(), b"bob".to_vec()).unwrap();
@@ -503,7 +520,7 @@ mod test {
     #[test]
     fn scan_newer_overwrites_older() {
         let dir = TempDir::new().unwrap();
-        let mut driver = Driver::open(dir.path()).unwrap();
+        let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
 
         driver.put(b"k".to_vec(), b"old".to_vec()).unwrap();
         driver.flush_table().unwrap();
@@ -519,14 +536,66 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         {
-            let mut driver = Driver::open(dir.path()).unwrap();
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
             driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
             driver.flush_table().unwrap();
             driver.put(b"b".to_vec(), b"2".to_vec()).unwrap();
         }
 
-        let driver = Driver::open(dir.path()).unwrap();
+        let driver = Driver::open(dir.path(), DurabilityMode::Sync).unwrap();
         assert_eq!(driver.get(b"a").unwrap(), Some(b"1".to_vec()));
         assert_eq!(driver.get(b"b").unwrap(), Some(b"2".to_vec()));
+    }
+
+    #[test]
+    fn volatile_put_get_and_recovery() {
+        let dir = TempDir::new().unwrap();
+
+        {
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Volatile).unwrap();
+            driver.put(b"x".to_vec(), b"10".to_vec()).unwrap();
+            driver.put(b"y".to_vec(), b"20".to_vec()).unwrap();
+            driver.flush_table().unwrap();
+            driver.put(b"z".to_vec(), b"30".to_vec()).unwrap();
+        }
+
+        let driver = Driver::open(dir.path(), DurabilityMode::Volatile).unwrap();
+        assert_eq!(driver.get(b"x").unwrap(), Some(b"10".to_vec()));
+        assert_eq!(driver.get(b"y").unwrap(), Some(b"20".to_vec()));
+        assert_eq!(driver.get(b"z").unwrap(), Some(b"30".to_vec()));
+    }
+
+    #[test]
+    fn async_put_get_and_recovery() {
+        use std::time::Duration;
+
+        let dir = TempDir::new().unwrap();
+        let interval = Duration::from_millis(50);
+
+        {
+            let mut driver = Driver::open(dir.path(), DurabilityMode::Async(interval)).unwrap();
+            driver.put(b"a".to_vec(), b"1".to_vec()).unwrap();
+            driver.put(b"b".to_vec(), b"2".to_vec()).unwrap();
+            driver.flush_table().unwrap();
+            driver.put(b"c".to_vec(), b"3".to_vec()).unwrap();
+
+            // Wait for the background flusher to sync the WAL.
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let driver = Driver::open(dir.path(), DurabilityMode::Async(interval)).unwrap();
+        assert_eq!(driver.get(b"a").unwrap(), Some(b"1".to_vec()));
+        assert_eq!(driver.get(b"b").unwrap(), Some(b"2".to_vec()));
+        assert_eq!(driver.get(b"c").unwrap(), Some(b"3".to_vec()));
+    }
+
+    #[test]
+    fn async_mode_driver_shutdown_on_drop() {
+        use std::time::Duration;
+
+        let dir = TempDir::new().unwrap();
+        let driver =
+            Driver::open(dir.path(), DurabilityMode::Async(Duration::from_millis(50))).unwrap();
+        drop(driver);
     }
 }
