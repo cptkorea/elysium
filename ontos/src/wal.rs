@@ -81,15 +81,15 @@ struct AsyncFlusher {
 /// The fsync behavior depends on the [`DurabilityMode`] passed to
 /// [`open`](Self::open). In [`Async`](DurabilityMode::Async) mode, a
 /// background thread periodically fsyncs; it is shut down automatically
-/// when the `Wal` is dropped.
-pub struct Wal {
+/// when the `WriteAheadLog` is dropped.
+pub struct WriteAheadLog {
     file: File,
     path: PathBuf,
     durability: DurabilityMode,
     flusher: Option<AsyncFlusher>,
 }
 
-impl Wal {
+impl WriteAheadLog {
     /// Opens an existing WAL file or creates a new one at `path` with
     /// the given [`DurabilityMode`].
     ///
@@ -222,7 +222,7 @@ impl Wal {
     }
 }
 
-impl Drop for Wal {
+impl Drop for WriteAheadLog {
     fn drop(&mut self) {
         if let Some(flusher) = self.flusher.take() {
             flusher.shutdown.store(true, Ordering::Relaxed);
@@ -281,7 +281,7 @@ mod tests {
         let path = dir.path().join("wal.log");
 
         {
-            let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+            let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
             wal.append(&WalRecord::Put {
                 key: b"k1".to_vec(),
                 value: b"v1".to_vec(),
@@ -298,7 +298,7 @@ mod tests {
             .unwrap();
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 3);
         assert_eq!(
             records[0],
@@ -327,7 +327,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nonexistent.wal");
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert!(records.is_empty());
     }
 
@@ -339,7 +339,7 @@ mod tests {
         // Drop the WAL to close the file, simulating a process that
         // wrote one good record before crashing.
         {
-            let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+            let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
             wal.append(&WalRecord::Put {
                 key: b"good".to_vec(),
                 value: b"val".to_vec(),
@@ -354,7 +354,7 @@ mod tests {
             file.write_all(b"short").unwrap();
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -370,7 +370,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("wal.log");
 
-        let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+        let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
         wal.append(&WalRecord::Put {
             key: b"k".to_vec(),
             value: b"v".to_vec(),
@@ -379,7 +379,7 @@ mod tests {
 
         wal.rotate().unwrap();
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert!(records.is_empty());
     }
 
@@ -388,9 +388,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("wal.log");
 
-        Wal::open(&path, DurabilityMode::Sync).unwrap();
+        WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert!(records.is_empty());
     }
 
@@ -402,7 +402,7 @@ mod tests {
         // Drop the WAL to close the file, simulating a process that
         // wrote one good record before crashing.
         {
-            let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+            let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
             wal.append(&WalRecord::Put {
                 key: b"good".to_vec(),
                 value: b"val".to_vec(),
@@ -416,7 +416,7 @@ mod tests {
             file.write_all(&[0x10, 0x00]).unwrap();
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -435,7 +435,7 @@ mod tests {
         // Drop the WAL to close the file, simulating a process that
         // wrote one good record before crashing.
         {
-            let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+            let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
             wal.append(&WalRecord::Put {
                 key: b"good".to_vec(),
                 value: b"val".to_vec(),
@@ -453,7 +453,7 @@ mod tests {
             file.write_all(garbage).unwrap();
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -469,7 +469,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("wal.log");
 
-        let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+        let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
 
         wal.append(&WalRecord::Put {
             key: b"before".to_vec(),
@@ -485,7 +485,7 @@ mod tests {
         })
         .unwrap();
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -503,7 +503,7 @@ mod tests {
         let big_value = vec![0xAB; 1_000_000];
 
         {
-            let mut wal = Wal::open(&path, DurabilityMode::Sync).unwrap();
+            let mut wal = WriteAheadLog::open(&path, DurabilityMode::Sync).unwrap();
             wal.append(&WalRecord::Put {
                 key: b"big".to_vec(),
                 value: big_value.clone(),
@@ -511,7 +511,7 @@ mod tests {
             .unwrap();
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -528,7 +528,7 @@ mod tests {
         let path = dir.path().join("wal.log");
 
         {
-            let mut wal = Wal::open(&path, DurabilityMode::Volatile).unwrap();
+            let mut wal = WriteAheadLog::open(&path, DurabilityMode::Volatile).unwrap();
             wal.append(&WalRecord::Put {
                 key: b"k".to_vec(),
                 value: b"v".to_vec(),
@@ -536,7 +536,7 @@ mod tests {
             .unwrap();
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -556,7 +556,8 @@ mod tests {
 
         {
             let mut wal =
-                Wal::open(&path, DurabilityMode::Async(Duration::from_millis(50))).unwrap();
+                WriteAheadLog::open(&path, DurabilityMode::Async(Duration::from_millis(50)))
+                    .unwrap();
             wal.append(&WalRecord::Put {
                 key: b"k".to_vec(),
                 value: b"v".to_vec(),
@@ -567,7 +568,7 @@ mod tests {
             thread::sleep(Duration::from_millis(100));
         }
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],
@@ -587,7 +588,8 @@ mod tests {
 
         // Create and immediately drop — the background thread should
         // shut down cleanly without hanging.
-        let wal = Wal::open(&path, DurabilityMode::Async(Duration::from_millis(50))).unwrap();
+        let wal =
+            WriteAheadLog::open(&path, DurabilityMode::Async(Duration::from_millis(50))).unwrap();
         drop(wal);
     }
 
@@ -598,7 +600,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("wal.log");
 
-        let mut wal = Wal::open(&path, DurabilityMode::Async(Duration::from_millis(50))).unwrap();
+        let mut wal =
+            WriteAheadLog::open(&path, DurabilityMode::Async(Duration::from_millis(50))).unwrap();
 
         wal.append(&WalRecord::Put {
             key: b"before".to_vec(),
@@ -616,7 +619,7 @@ mod tests {
 
         thread::sleep(Duration::from_millis(100));
 
-        let records = Wal::recover(&path).unwrap();
+        let records = WriteAheadLog::recover(&path).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0],

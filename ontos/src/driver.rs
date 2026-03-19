@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::db::{MemTable, SSTable, SortedStore};
-use crate::wal::{Wal, WalRecord};
+use crate::wal::{WalRecord, WriteAheadLog};
 use crate::{DurabilityMode, Error};
 
 /// Top-level LSM-tree engine that coordinates writes through a [`MemTable`],
@@ -45,7 +45,7 @@ use crate::{DurabilityMode, Error};
 /// ```
 pub struct Driver<S: SortedStore<Vec<u8>, Option<Vec<u8>>> = BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
     master: MemTable<S>,
-    wal: Wal,
+    wal: WriteAheadLog,
     data_dir: PathBuf,
     /// Paths to SSTable files, ordered from oldest (index 0) to newest.
     sst_paths: Vec<PathBuf>,
@@ -63,15 +63,12 @@ impl Driver<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
     /// off.
     ///
     /// If the directory does not exist, it is created.
-    pub fn open(
-        data_dir: impl Into<PathBuf>,
-        durability: DurabilityMode,
-    ) -> Result<Self, Error> {
+    pub fn open(data_dir: impl Into<PathBuf>, durability: DurabilityMode) -> Result<Self, Error> {
         let data_dir = data_dir.into();
         fs::create_dir_all(&data_dir)?;
 
         let wal_path = data_dir.join("wal.log");
-        let records = Wal::recover(&wal_path)?;
+        let records = WriteAheadLog::recover(&wal_path)?;
 
         let mut memtable = MemTable::new();
         for record in records {
@@ -81,7 +78,7 @@ impl Driver<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
             }
         }
 
-        let wal = Wal::open(&wal_path, durability.clone())?;
+        let wal = WriteAheadLog::open(&wal_path, durability.clone())?;
         let sst_paths = discover_sst_files(&data_dir);
         let offset = sst_paths.len();
 
@@ -113,7 +110,7 @@ impl<S: SortedStore<Vec<u8>, Option<Vec<u8>>>> Driver<S> {
         fs::create_dir_all(&data_dir)?;
 
         let wal_path = data_dir.join("wal.log");
-        let wal = Wal::open(&wal_path, durability.clone())?;
+        let wal = WriteAheadLog::open(&wal_path, durability.clone())?;
         let sst_paths = discover_sst_files(&data_dir);
         let offset = sst_paths.len();
 
@@ -312,7 +309,7 @@ mod test {
         let dir = TempDir::new().unwrap();
         let mut driver = Driver {
             master: MemTable::with_capacity(2),
-            wal: Wal::open(dir.path().join("wal.log"), DurabilityMode::Sync).unwrap(),
+            wal: WriteAheadLog::open(dir.path().join("wal.log"), DurabilityMode::Sync).unwrap(),
             data_dir: dir.path().to_path_buf(),
             sst_paths: Vec::new(),
             offset: 0,
